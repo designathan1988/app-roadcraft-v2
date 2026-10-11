@@ -14,6 +14,8 @@ import { createRenderContext, type RenderContext } from '../../render/context';
 import { DETAIL_MEAN, disposePbr, pbrFor } from './pbr';
 import { disposeProc, procFor, type ProcTextures } from './procedural';
 import { imageTexture } from './images';
+import { awakeShare, curtainMaterial, lampMaterial, NIGHT, nightUniforms, roomMaterial, setLampLevel } from './night';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 
 const SKY_VERTEX = `
   varying vec3 vDir;
@@ -53,6 +55,11 @@ export interface Look {
   setSize(w: number, h: number): void;
   render(): void;
   setAO(on: boolean): void;
+  /**
+   * Hora do dia (0–24): sol, céu, reflexo do céu, luz difusa, brilho e as
+   * luzes da noite. Devolve o quanto está escuro (0 dia, 1 noite).
+   */
+  setTime(hour: number): number;
   dispose(): void;
 }
 
@@ -89,17 +96,24 @@ export function createLook(renderer: THREE.WebGLRenderer, scene: THREE.Scene, ca
   scene.add(sky);
   scene.background = null;
 
-  // O céu vira o mapa de ambiente (reflexos no vidro, no metal e nas telhas).
+  // O céu vira o mapa de ambiente (reflexos no vidro, no metal e nas telhas);
+  // refeito quando a hora muda (o vidro reflete o céu da noite à noite).
   const pmrem = new THREE.PMREMGenerator(renderer);
   const probe = new THREE.Scene();
-  const probeSky = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), skyMat.clone());
+  const probeMat = skyMat.clone();
+  const probeSky = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), probeMat);
   probe.add(probeSky);
-  const env = pmrem.fromScene(probe, 0, 0.1, 100);
+  let env = pmrem.fromScene(probe, 0, 0.1, 100);
   scene.environment = env.texture;
   scene.environmentIntensity = 0.55;
-  probeSky.geometry.dispose();
-  (probeSky.material as THREE.Material).dispose();
-  pmrem.dispose();
+  const rebuildEnv = () => {
+    for (const k of ['uZenith', 'uHorizon', 'uGround', 'uSunColor'] as const) (probeMat.uniforms[k]!.value as THREE.Color).copy(skyMat.uniforms[k]!.value as THREE.Color);
+    (probeMat.uniforms.uSunDir!.value as THREE.Vector3).copy(skyMat.uniforms.uSunDir!.value as THREE.Vector3);
+    const next = pmrem.fromScene(probe, 0, 0.1, 100);
+    env.dispose();
+    env = next;
+    scene.environment = env.texture;
+  };
 
   const hemi = new THREE.HemisphereLight('#e9e6dc', '#6d6b58', 0.75);
   const sun = new THREE.DirectionalLight('#fff0d8', 3.4);
@@ -141,11 +155,27 @@ export function createLook(renderer: THREE.WebGLRenderer, scene: THREE.Scene, ca
     gtao.setSize(size.x * ratio, size.y * ratio);
   }
   composer.addPass(gtao);
+  // Brilho só à noite e só no que passa de 1,05 (luminárias), como no jogo.
+  const bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), NIGHT.bloomStrength, NIGHT.bloomRadius, NIGHT.bloomThreshold);
+  bloom.enabled = false;
+  composer.addPass(bloom);
   composer.addPass(new OutputPass());
+
+  const lastT = new THREE.Vector3();
+  let lastSpan = 60;
+  const C = (h: string) => new THREE.Color(h);
+  const SKY = {
+    zenith: [C('#5d8fcf'), C('#46588a'), C('#0d1830')],
+    horizon: [C('#d6e3ec'), C('#f2a56a'), C('#2a3552')],
+    ground: [C('#b9b4a6'), C('#6e5d52'), C('#1b1e24')],
+  };
+  const mix3 = (set: THREE.Color[], dark: number, dusk: number, out: THREE.Color) => out.copy(set[0]!).lerp(set[2]!, dark).lerp(set[1]!, dusk * (1 - dark * 0.6));
 
   return {
     sun,
     follow(t, span) {
+      lastT.copy(t);
+      lastSpan = span;
       const d = 220;
       sun.position.copy(t).addScaledVector(sunDir, d);
       sun.target.position.copy(t);
@@ -165,11 +195,50 @@ export function createLook(renderer: THREE.WebGLRenderer, scene: THREE.Scene, ca
     setAO(on) {
       gtao.enabled = on;
     },
+    setTime(hour) {
+      const h = ((hour % 24) + 24) % 24;
+      // Altura do sol: > 0 de dia; o azimute anda de leste a oeste.
+      const s = Math.sin((Math.PI * (h - 6)) / 12);
+      const dark = THREE.MathUtils.clamp((0.1 - s) / 0.28, 0, 1);
+      const dusk = THREE.MathUtils.clamp(1 - Math.abs(s) / 0.32, 0, 1);
+      const az = SUN_AZIMUTH + ((h - 12) / 12) * 1.3;
+      const el = dark > 0.5 ? (50 * Math.PI) / 180 : Math.max(0.06, SUN_ELEVATION * Math.max(0.12, s));
+      const azUse = dark > 0.5 ? az + Math.PI : az;
+      sunDir.set(Math.cos(el) * Math.sin(azUse), Math.sin(el), Math.cos(el) * Math.cos(azUse)).normalize();
+      // Sol quente e baixo no fim da tarde; lua fria e fraca à noite.
+      if (dark > 0.5) {
+        sun.color.set('#9db2e0');
+        sun.intensity = 0.55;
+      } else {
+        sun.color.set('#ff9e5c').lerp(C('#fff0d8'), THREE.MathUtils.smoothstep(s, 0, 0.5));
+        sun.intensity = 3.4 * THREE.MathUtils.smoothstep(s, -0.06, 0.28) * (1 - dark);
+      }
+      mix3(SKY.zenith, dark, dusk, skyMat.uniforms.uZenith!.value as THREE.Color);
+      mix3(SKY.horizon, dark, dusk, skyMat.uniforms.uHorizon!.value as THREE.Color);
+      mix3(SKY.ground, dark, dusk, skyMat.uniforms.uGround!.value as THREE.Color);
+      (skyMat.uniforms.uSunColor!.value as THREE.Color).copy(dark > 0.5 ? C('#1b2238') : sun.color);
+      (skyMat.uniforms.uSunDir!.value as THREE.Vector3).copy(sunDir);
+      hemi.intensity = 0.75 * (1 - dark) + 0.32 * dark;
+      hemi.color.set('#e9e6dc').lerp(C('#33415f'), dark);
+      hemi.groundColor.set('#6d6b58').lerp(C('#14161a'), dark);
+      scene.environmentIntensity = 0.55 * (1 - dark) + 0.16 * dark;
+      nightUniforms.uDark.value = dark;
+      nightUniforms.uAwake.value = awakeShare(h);
+      setLampLevel(dark);
+      bloom.enabled = dark > 0.15;
+      rebuildEnv();
+      this.follow(lastT, lastSpan);
+      return dark;
+    },
     dispose() {
       composer.dispose();
       gtao.dispose();
       target.dispose();
       env.dispose();
+      pmrem.dispose();
+      probeSky.geometry.dispose();
+      probeMat.dispose();
+      bloom.dispose();
       sky.geometry.dispose();
       skyMat.dispose();
       scene.remove(sky, hemi, sun, sun.target);
@@ -256,7 +325,7 @@ export function createLookContext(): RenderContext {
     boxGeometry: base.boxGeometry,
     modules: base.modules,
     material(key: MaterialKey) {
-      const id = `${key.role}|${key.color}|${key.roughness}|${key.metalness ?? 0}|${key.doubleSide ? 2 : 1}|${key.texture ?? ''}|${key.textureScale ?? 1}|${key.finish ?? ''}|${key.color2 ?? ''}|${key.params ?? ''}|${key.image ?? ''}`;
+      const id = `${key.role}|${key.color}|${key.roughness}|${key.metalness ?? 0}|${key.doubleSide ? 2 : 1}|${key.texture ?? ''}|${key.textureScale ?? 1}|${key.finish ?? ''}|${key.color2 ?? ''}|${key.params ?? ''}|${key.image ?? ''}|${key.lamp ? 1 : 0}|${key.curtain ? 1 : 0}`;
       let m = extra.get(id);
       if (m) return m;
       m = base.material(key);
@@ -275,6 +344,7 @@ export function createLookContext(): RenderContext {
       } else if (key.finish === 'interior') {
         m.roughness = 1;
         m.envMapIntensity = 0.12;
+        roomMaterial(m);
       } else if (proc) procMaterial(m, key, proc);
       else if (pbr) {
         m.map = pbr.map;
@@ -287,6 +357,8 @@ export function createLookContext(): RenderContext {
         m.color.set(key.color).multiplyScalar(1 / DETAIL_MEAN);
       }
       if ((key.metalness ?? 0) > 0.3 && key.role !== 'glass') m.envMapIntensity = 1.2;
+      if (key.lamp) lampMaterial(m, key.color);
+      if (key.curtain) curtainMaterial(m);
       m.needsUpdate = true;
       extra.set(id, m);
       return m;

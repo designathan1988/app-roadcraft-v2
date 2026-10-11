@@ -9,6 +9,7 @@ import type { MaterialKey } from '../../geometry/parts';
 import type { RenderContext } from '../../render/context';
 import { metricUVs } from '../../render/build-building';
 import { materialKey } from './finishes';
+import { roomHash } from './night';
 
 const FLAT_ROOF = { finish: 'membrane', color: '#8f9290' };
 const TERRACE_FLOOR = { finish: 'floor', color: '#d4ccbf', color2: '#a29a8d' };
@@ -108,7 +109,8 @@ export function buildShellMesh(b: Building3, ev: Evaluated, ctx: RenderContext, 
   }
   const total = [...groups.values()].reduce((s, g) => s + g.tris.length, 0);
   const pos = new Float32Array(total * 9),
-    nor = new Float32Array(total * 9);
+    nor = new Float32Array(total * 9),
+    room = new Float32Array(total * 3);
   const drawnFace = new Uint32Array(total);
   const geo = new THREE.BufferGeometry();
   const materials: THREE.Material[] = [];
@@ -142,6 +144,9 @@ export function buildShellMesh(b: Building3, ev: Evaluated, ctx: RenderContext, 
         nor[(o * 3 + j) * 3 + 2] = nz;
       }
       drawnFace[o] = faceOf[t]!;
+      // Sorteio do cômodo (acende à noite conforme a fração acordada); 1 = nunca.
+      const rv = f.room !== undefined ? roomHash(f.room) : 1;
+      room[o * 3] = room[o * 3 + 1] = room[o * 3 + 2] = rv;
       o++;
     }
     geo.addGroup(start * 3, (o - start) * 3, materials.length);
@@ -149,6 +154,7 @@ export function buildShellMesh(b: Building3, ev: Evaluated, ctx: RenderContext, 
   }
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  geo.setAttribute('aRoom', new THREE.BufferAttribute(room, 1));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(metricUVs(Array.from(pos)), 2));
   geo.computeBoundingSphere();
   geo.computeBoundingBox();

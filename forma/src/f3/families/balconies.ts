@@ -64,7 +64,7 @@ export const BALCONY: Family = {
     P.len('doorHeight', 'Altura da porta', 2.3, 1.9, 3.2, 'type', 'detail'),
     P.color('slabColor', 'Cor da laje', '#e6e1d6'),
     P.color('floorColor', 'Cor do piso', '#b9a58c'),
-    P.finish('floorFinish', 'Acabamento do piso', 'tile'),
+    P.finish('floorFinish', 'Acabamento do piso', 'floor'),
     P.color('wallColor', 'Cor da mureta', '#ebe4d6'),
   ],
   size: (p) => [Math.max(num(p, 'width'), bool(p, 'withDoor') ? num(p, 'doorWidth') + 0.3 : 0), Math.max(num(p, 'railH'), bool(p, 'withDoor') ? num(p, 'doorHeight') : 0), num(p, 'depth')],
@@ -75,13 +75,12 @@ export const BALCONY: Family = {
       d = num(p, 'depth'),
       t = num(p, 'thickness');
     const shape = str(p, 'shape');
-    const slab = mat('concrete', str(p, 'slabColor'), 'plaster');
+    const slab = mat('concrete', str(p, 'slabColor'), 'paint');
     const floor = mat('stone', str(p, 'floorColor'), str(p, 'floorFinish'));
     const outline = balconyOutline(shape, w, d);
-    // Laje estrutural com pingadeira e piso por cima (topo do piso em y = 0).
+    // Laje inteiriça e piso por cima (topo do piso em y = 0); sem placa solta embaixo.
     out.slab(slab, outline, -t, -0.02);
     out.slab(floor, balconyOutline(shape, w - 0.02, d - 0.01), -0.02, 0);
-    out.slab(slab, balconyOutline(shape, w + 0.03, d + 0.015), -t - 0.03, -t + 0.03);
     const rh = num(p, 'railH');
     const e = 0.06;
     const inner = balconyOutline(shape, w - 2 * e, d - e);

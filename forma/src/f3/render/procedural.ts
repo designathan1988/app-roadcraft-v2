@@ -95,7 +95,7 @@ export const PROC: Record<string, ProcDef> = {
     params: [
       { key: 'w', label: 'Placa largura', min: 0.5, max: 4, step: 0.05, value: 1.2 },
       { key: 'h', label: 'Placa altura', min: 0.3, max: 3, step: 0.05, value: 0.6 },
-      { key: 'ties', label: 'Furos de fôrma', min: 0, max: 1, step: 1, value: 1, options: ['Sem', 'Com'] },
+      { key: 'ties', label: 'Furos de fôrma', min: 0, max: 1, step: 1, value: 0, options: ['Sem', 'Com'] },
       { key: 'vary', label: 'Manchas', min: 0, max: 1, step: 0.05, value: 0.45 },
     ],
     tile: (p) => [cells(p.w!, 2.4) * p.w!, cells(p.h!, 2.4) * p.h!],

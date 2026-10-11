@@ -55,6 +55,17 @@ export function frameMatrix(p: Vec3, u: Vec3, v: Vec3, n: Vec3): M4 {
   return [u[0], u[1], u[2], 0, v[0], v[1], v[2], 0, n[0], n[1], n[2], 0, p[0], p[1], p[2], 1];
 }
 
+/**
+ * Referencial de peça numa face lateral: z para fora (n), y subindo (v) e
+ * x = v × n, à direita de quem olha a fachada. A base (u, v, n) da face é
+ * canhota (det −1) e o three.js só inverte a face da frente pelo determinante
+ * do objeto, nunca pela matriz de cada instância: peça instanciada nela sai
+ * espelhada, com enrolamento e normal trocados (o vidro ficava opaco).
+ */
+export function faceMatrix(p: Vec3, u: Vec3, v: Vec3, n: Vec3): M4 {
+  return frameMatrix(p, [-u[0], -u[1], -u[2]], v, n);
+}
+
 export function translation(x: number, y: number, z: number): M4 {
   return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1];
 }
@@ -136,7 +147,8 @@ export class FrameSink implements PartSink {
     const pts = all.flat();
     const tri = earcut(flat, holeIdx);
     for (let t = 0; t < tri.length; t += 3) {
-      let [a, b, c] = [pts[tri[t]!]!, pts[tri[t + 1]!]!, pts[tri[t + 2]!]!];
+      const a = pts[tri[t]!]!;
+      let [b, c] = [pts[tri[t + 1]!]!, pts[tri[t + 2]!]!];
       if (area2([a, b, c]) < 0) [b, c] = [c, b];
       push(P(a[0], a[1], z1), P(b[0], b[1], z1), P(c[0], c[1], z1));
       push(P(a[0], a[1], z0), P(c[0], c[1], z0), P(b[0], b[1], z0));

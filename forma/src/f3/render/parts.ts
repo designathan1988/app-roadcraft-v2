@@ -36,7 +36,9 @@ export function partMaterial(m: PartMat, textured = true): MaterialKey {
   void textureScale;
   const key: MaterialKey = textured && texture ? full : plain;
   if (m.slot === 'glass') return { ...key, roughness: 0.08, metalness: 0.45 };
-  if (m.slot === 'light') return { ...key, roughness: 0.4 };
+  if (m.slot === 'light') return { ...key, roughness: 0.4, lamp: true };
+  // Só cortina de janela (toldos também são tecido, mas não acendem).
+  if (m.curtain) return { ...key, curtain: true };
   return key;
 }
 
@@ -63,7 +65,7 @@ export interface PartsMesh {
   dispose(): void;
 }
 
-const keyOf = (k: MaterialKey) => `${k.role}|${k.color}|${k.roughness}|${k.metalness ?? 0}|${k.texture ?? ''}|${k.textureScale ?? 1}|${k.finish ?? ''}|${k.color2 ?? ''}|${k.params ?? ''}|${k.image ?? ''}`;
+const keyOf = (k: MaterialKey) => `${k.role}|${k.color}|${k.roughness}|${k.metalness ?? 0}|${k.texture ?? ''}|${k.textureScale ?? 1}|${k.finish ?? ''}|${k.color2 ?? ''}|${k.params ?? ''}|${k.image ?? ''}|${k.lamp ? 1 : 0}|${k.curtain ? 1 : 0}`;
 
 export function buildPartsMesh(parts: Parts3, ctx: RenderContext, shadows = true, visible?: (tag: PartTag) => boolean): PartsMesh {
   const show = visible ? parts.tags.map((t) => visible(t)) : null;

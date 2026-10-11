@@ -53,6 +53,8 @@ export function polish(root: HTMLElement): void {
     }
     if (!f.title) f.title = label;
     if (label.length > 11 || (ctl instanceof HTMLSelectElement && label.length > 7)) f.classList.add("w");
+    // Opção longa não cabe ao lado do rótulo (sobram ~95 px com a seta): rótulo em cima, campo na linha toda.
+    if (ctl instanceof HTMLSelectElement && Math.max(0, ...[...ctl.options].map((o) => o.text.length)) > 14) f.classList.add('w', 'st');
     if (ctl instanceof HTMLInputElement && ctl.type !== 'color') {
       const wrap = document.createElement('span');
       wrap.className = 'f3-in';
@@ -108,4 +110,22 @@ function scrub(label: HTMLElement, input: HTMLInputElement): void {
     label.addEventListener('pointermove', move);
     label.addEventListener('pointerup', up);
   });
+}
+
+/**
+ * Fecha um menu ou janela flutuante no primeiro toque fora dele (fase de
+ * captura: o canvas não engole o evento). Toques dentro não gastam o ouvinte;
+ * `except` (o botão que abre) também não fecha. Devolve o desligador.
+ */
+export function closeOnOutside(el: HTMLElement, close: () => void, except?: Element | null): () => void {
+  const off = () => document.removeEventListener('pointerdown', on, true);
+  const on = (e: PointerEvent) => {
+    if (!el.isConnected) return off();
+    const t = e.target as Node;
+    if (el.contains(t) || except?.contains(t)) return;
+    off();
+    close();
+  };
+  setTimeout(() => el.isConnected && document.addEventListener('pointerdown', on, true), 0);
+  return off;
 }

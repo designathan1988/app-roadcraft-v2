@@ -148,7 +148,7 @@ function buildWindow(p: Params, out: PartSink): void {
   if (bool(p, 'curtains') && op !== 'louvre') {
     const cw = Math.max(0.12, iw * 0.2);
     const ct = Math.min(ih, openingSpring(shape, iw, ih) + (shape === 'rect' ? 0 : 0.1));
-    const fabric: PartMat = { slot: 'fabric', color: str(p, 'curtainColor') };
+    const fabric: PartMat = { slot: 'fabric', color: str(p, 'curtainColor'), curtain: true };
     const zc = zf0 - 0.12;
     for (const sgn of [-1, 1]) out.box(fabric, [sgn * (iw / 2 - cw / 2 + 0.05), fw + ct / 2 + 0.05, zc], [cw, ct + 0.1, 0.04]);
     out.box({ slot: 'metal', color: '#6b6560', finish: 'metal' }, [0, fw + ct + 0.12, zc], [iw + 0.3, 0.025, 0.025]);

@@ -73,6 +73,8 @@ export interface PartMat {
   color2?: string;
   /** Imagem do projeto (placas de imagem). */
   image?: string;
+  /** Cortina atrás do vidro: deixa passar a luz do cômodo à noite. */
+  curtain?: boolean;
 }
 
 /** Recebe as peças no referencial local da família. */

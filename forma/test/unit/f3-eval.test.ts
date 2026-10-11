@@ -122,4 +122,22 @@ describe('fachada forma/3', () => {
     expect(withWin.shell.indices.length).toBeGreaterThan(plain.shell.indices.length);
     expect(withWin.parts.inst.length + withWin.parts.meshes.length).toBeGreaterThan(8);
   });
+  it('peças em face ficam num referencial destro (instância nunca espelhada) com z para fora', async () => {
+    const { facadeRule, levelsFor } = await import('../../src/f3/model/defaults');
+    const det = (m: number[]) => m[0]! * (m[5]! * m[10]! - m[6]! * m[9]!) - m[4]! * (m[1]! * m[10]! - m[2]! * m[9]!) + m[8]! * (m[1]! * m[6]! - m[2]! * m[5]!);
+    const ev = evaluateBuilding(
+      building({
+        levels: levelsFor(3, 3, 3),
+        solids: [solid({ plan: { outer: rectPlan(10, 8), holes: [] }, height: 9, roof: roofSpec('flat'), facade: [facadeRule('win-casement', { mode: 'spacing', value: 2.5 }), facadeRule('balcony-glass', { mode: 'count', value: 1 })] })],
+      }),
+    );
+    expect(ev.placements.length).toBeGreaterThan(8);
+    for (const pl of ev.placements) {
+      expect(det(pl.frame)).toBeCloseTo(1, 5);
+      // z local aponta para fora do centro da planta (origem no meio do retângulo).
+      expect(pl.frame[8]! * pl.frame[12]! + pl.frame[10]! * pl.frame[14]!).toBeGreaterThan(0);
+    }
+    expect(ev.parts.inst.length).toBeGreaterThan(0);
+    for (const it of ev.parts.inst) expect(det(it.m)).toBeGreaterThan(0);
+  });
 });

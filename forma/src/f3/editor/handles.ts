@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import type { ID } from '../model/schema';
 import type { View } from './view';
 
-export type HandleKind = 'move-x' | 'move-z' | 'move-xz' | 'lift' | 'rotate' | 'push' | 'height' | 'vertex' | 'bend' | 'taper' | 'cwidth' | 'cheight' | 'csill';
+export type HandleKind = 'move-x' | 'move-z' | 'move-xz' | 'lift' | 'rotate' | 'push' | 'height' | 'vertex' | 'bend' | 'taper' | 'cwidth' | 'cheight' | 'csill' | 'size';
 
 export interface Handle {
   kind: HandleKind;
@@ -19,6 +19,9 @@ export interface Handle {
   solid?: ID;
   edge?: ID;
   vertex?: ID;
+  /** Alça de tamanho: que lado da caixa ela puxa (-1, 0 ou 1 em x e z locais). */
+  sx?: number;
+  sz?: number;
   color: string;
   label: string;
 }
@@ -72,7 +75,8 @@ export class Handles {
     for (const h of this.list) {
       const wpp = this.view.worldPerPixel(h.at);
       const hot = this.hover === h;
-      const color = hot ? '#111111' : h.color;
+      // Realce amarelo sob o ponteiro, como o TransformControls do three.js.
+      const color = hot ? '#ffd23f' : h.color;
       if (h.kind === 'rotate' && h.ring) {
         const l = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(h.ring), this.lineMat(color));
         l.renderOrder = 31;
@@ -105,6 +109,20 @@ export class Handles {
         this.group.add(c);
         continue;
       }
+      if (h.kind === 'size') {
+        // Quadrado branco com contorno escuro (cantos maiores que os lados).
+        const px = (h.sx && h.sz ? 13 : 11) * (hot ? 1.35 : 1);
+        const o = new THREE.Mesh(this.box, this.mat('#1f2326'));
+        o.position.copy(h.at);
+        o.scale.set(wpp * (px + 4), wpp * (px + 4), wpp * (px + 4));
+        o.renderOrder = 31;
+        const f = new THREE.Mesh(this.box, this.mat(hot ? '#ffd23f' : '#ffffff'));
+        f.position.copy(h.at);
+        f.scale.setScalar(wpp * px);
+        f.renderOrder = 32;
+        this.group.add(o, f);
+        continue;
+      }
       if (h.kind !== 'vertex') {
         const o = new THREE.Mesh(h.kind === 'move-xz' ? this.box : this.sphere, this.mat('#1f2326'));
         o.position.copy(h.at);
@@ -131,7 +149,7 @@ export class Handles {
   }
 
   /** Alça sob o ponteiro (a mais próxima dentro da tolerância). */
-  hit(e: { clientX: number; clientY: number }, tol = 13): Handle | null {
+  hit(e: { clientX: number; clientY: number }, tol = 18): Handle | null {
     const r = this.view.renderer.domElement.getBoundingClientRect();
     const m = new THREE.Vector2(e.clientX - r.left, e.clientY - r.top);
     let best: { d: number; h: Handle } | null = null;
@@ -148,12 +166,13 @@ export class Handles {
         d = Math.min(d, S(h.at).distanceTo(m) - 4);
       } else if (h.dir) {
         const len = this.view.worldPerPixel(h.at) * ARROW_PX;
-        const a = S(h.at.clone().addScaledVector(h.dir, len * 0.25)),
-          b = S(h.at.clone().addScaledVector(h.dir, len * 1.05));
+        // A seta inteira pega o clique (da base à ponta, com folga além do cone).
+        const a = S(h.at.clone().addScaledVector(h.dir, len * 0.08)),
+          b = S(h.at.clone().addScaledVector(h.dir, len * 1.15));
         d = segDist(m, a, b);
       } else d = S(h.at).distanceTo(m) - (h.kind === 'vertex' ? 2 : 0);
       // Pontos ganham dos traços quando empatam.
-      const bias = h.kind === 'vertex' || h.kind === 'bend' ? -3 : 0;
+      const bias = h.kind === 'vertex' || h.kind === 'bend' || h.kind === 'size' ? -4 : 0;
       if (d < tol && (!best || d + bias < best.d)) best = { d: d + bias, h };
     }
     return best?.h ?? null;

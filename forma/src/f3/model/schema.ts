@@ -53,6 +53,8 @@ export interface ViewState {
   hiddenCategories: string[];
   /** Camada que recebe o que for criado. */
   activeLayer?: ID;
+  /** Hora do dia na vista (0–24). */
+  time?: number;
 }
 
 /** Perfil varrido em volta do volume numa altura. */

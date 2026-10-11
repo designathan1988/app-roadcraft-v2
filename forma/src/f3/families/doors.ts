@@ -1,7 +1,7 @@
 // Portas: de folha (almofadada, lisa, de vidro, meio vidro, tábuas, balcão),
 // de garagem (de enrolar, seccionada, basculante), industrial (de enrolar
 // grande, com doca) e vitrine de loja (vidro com porta, letreiro, toldo).
-import type { Family, PartMat, PartSink, Params } from './family';
+import type { Family, PartMat, PartSink } from './family';
 import { bool, num, P, str } from './family';
 import { inflate, openingProfile, openingTop, type OpeningShape, type Pt } from './shapes';
 import { frameParams } from './windows';

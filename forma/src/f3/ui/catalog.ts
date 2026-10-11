@@ -180,7 +180,8 @@ export function mountCatalog(ed: Editor3): { open(): void } {
     cards.querySelectorAll<HTMLButtonElement>('.fav').forEach((b) =>
       b.addEventListener('click', () => {
         const id = b.dataset.fav!;
-        favs.has(id) ? favs.delete(id) : favs.add(id);
+        if (favs.has(id)) favs.delete(id);
+        else favs.add(id);
         try {
           localStorage.setItem(FAV_KEY, JSON.stringify([...favs]));
         } catch {

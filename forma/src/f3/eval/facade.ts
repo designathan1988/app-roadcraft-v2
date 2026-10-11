@@ -9,7 +9,7 @@ import { resolveParams } from '../families/family';
 import { family, typeById } from '../families/index';
 import type { FaceFrame, FaceInfo } from './faces';
 import type { Shell } from './evaluate';
-import { frameMatrix, mul, rotationYXZ, translation, type M4, type PartTag } from './parts';
+import { faceMatrix, mul, rotationYXZ, translation, type M4, type PartTag } from './parts';
 
 /** Lado visível de um sólido em coordenadas desenvolvidas (s ao longo, y subindo pela face). */
 export interface EdgeRegion {
@@ -155,7 +155,7 @@ export function frameAt(r: EdgeRegion, s: number, y: number): M4 {
   for (const g of r.segs) if (s >= g.s0 - 1e-6) seg = g;
   const ds = s - seg.s0;
   const p: Vec3 = [seg.o[0] + seg.u[0] * ds + seg.v[0] * y, seg.o[1] + seg.u[1] * ds + seg.v[1] * y, seg.o[2] + seg.u[2] * ds + seg.v[2] * y];
-  return frameMatrix(p, seg.u, seg.v, seg.n);
+  return faceMatrix(p, seg.u, seg.v, seg.n);
 }
 
 /** Níveis do edifício dentro da altura do sólido. */

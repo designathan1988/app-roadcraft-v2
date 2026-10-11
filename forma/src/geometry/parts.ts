@@ -28,6 +28,10 @@ export interface MaterialKey {
   params?: string;
   /** Imagem do projeto como textura (placas de imagem). */
   image?: string;
+  /** Luminária: acende à noite. */
+  lamp?: boolean;
+  /** Cortina: deixa passar a luz do cômodo à noite. */
+  curtain?: boolean;
 }
 
 /** Dados de seleção ligados a cada peça. */

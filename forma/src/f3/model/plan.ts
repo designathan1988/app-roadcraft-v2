@@ -104,8 +104,8 @@ function cornerOf(prev: Vec2, v: Vec2, next: Vec2, round: number, chamfer: numbe
   const bl = len(bis) || 1;
   const cd = r / Math.sin(ang / 2);
   const c: Vec2 = [v[0] + (bis[0] / bl) * cd, v[1] + (bis[1] / bl) * cd];
-  let a1 = Math.atan2(p1[1] - c[1], p1[0] - c[0]);
-  let a2 = Math.atan2(p2[1] - c[1], p2[0] - c[0]);
+  const a1 = Math.atan2(p1[1] - c[1], p1[0] - c[0]);
+  const a2 = Math.atan2(p2[1] - c[1], p2[0] - c[0]);
   let da = a2 - a1;
   while (da > Math.PI) da -= 2 * Math.PI;
   while (da < -Math.PI) da += 2 * Math.PI;

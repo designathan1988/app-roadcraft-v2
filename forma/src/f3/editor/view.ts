@@ -104,12 +104,24 @@ export class View {
 
   private makeGrid(step: number): THREE.GridHelper {
     const g = new THREE.GridHelper(240, Math.round(240 / step), '#a9aca4', '#c4c4ba');
-    const m = g.material as THREE.Material;
+    const m = g.material as THREE.LineBasicMaterial;
     m.transparent = true;
-    m.opacity = 0.32;
+    // A grade não tem luz própria: escurece com a noite (senão brilha no chão escuro).
+    m.opacity = 0.32 * (1 - 0.75 * this.dark);
+    m.color.setScalar(1 - 0.8 * this.dark);
     m.depthWrite = false;
     g.position.y = 0.002;
     return g;
+  }
+
+  /** Quanto está escuro (0 dia, 1 noite): a grade acompanha. */
+  private dark = 0;
+  setDark(dark: number): void {
+    this.dark = dark;
+    const m = this.grid.material as THREE.LineBasicMaterial;
+    m.opacity = 0.32 * (1 - 0.75 * dark);
+    m.color.setScalar(1 - 0.8 * dark);
+    this.mark();
   }
 
   setGrid(step: number): void {
@@ -196,7 +208,7 @@ export class View {
         }
         continue;
       }
-      cur && this.drop(cur);
+      if (cur) this.drop(cur);
       const ev = evaluateBuilding(b, { preview: preview.has(b.id), hidden: (s) => solidHidden(p, s) }, p);
       const shell = buildShellMesh(b, ev, this.ctx);
       const parts = buildPartsMesh(ev.parts, this.ctx, true, partVisible(b));

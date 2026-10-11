@@ -13,6 +13,7 @@ import { AWNING, BRISE, CANOPY, COBOGO, PORCH_ROOF, ROLL_SHUTTER } from './canop
 import { BAND, CLOCK, CORNICE, DOWNPIPE, PEDIMENT, PILASTER, QUOINS, SIGN } from './ornament';
 import { CHIMNEY, CUPOLA, DORMER, LADDER, SILO, SKYLIGHT, SOLAR, STACK, TANK, VENT, WATER_TANK } from './roofgear';
 import { CLADDING, IMAGE_DECAL } from './decal';
+import { STREET_LAMP, WALL_LAMP } from './lights';
 
 const families = new Map<string, Family>();
 
@@ -28,12 +29,18 @@ export function allFamilies(): Family[] {
   return [...families.values()];
 }
 
-for (const f of [WINDOW, BAY_WINDOW, DOOR, GARAGE_DOOR, LOADING_DOOR, SHOPFRONT, BALCONY, VERANDA, RAILING, JULIETTE, WALL_RUN, FENCE, GATE, HEDGE, COLUMN, BEAM, PERGOLA, PORTICO, STAIR, RAMP, CANOPY, AWNING, PORCH_ROOF, BRISE, COBOGO, ROLL_SHUTTER, CORNICE, PILASTER, QUOINS, PEDIMENT, BAND, SIGN, CLOCK, DOWNPIPE, CHIMNEY, SKYLIGHT, SOLAR, WATER_TANK, VENT, CUPOLA, DORMER, SILO, STACK, LADDER, TANK, IMAGE_DECAL, CLADDING]) registerFamily(f);
+for (const f of [WINDOW, BAY_WINDOW, DOOR, GARAGE_DOOR, LOADING_DOOR, SHOPFRONT, BALCONY, VERANDA, RAILING, JULIETTE, WALL_RUN, FENCE, GATE, HEDGE, COLUMN, BEAM, PERGOLA, PORTICO, STAIR, RAMP, CANOPY, AWNING, PORCH_ROOF, BRISE, COBOGO, ROLL_SHUTTER, CORNICE, PILASTER, QUOINS, PEDIMENT, BAND, SIGN, CLOCK, DOWNPIPE, CHIMNEY, SKYLIGHT, SOLAR, WATER_TANK, VENT, CUPOLA, DORMER, SILO, STACK, LADDER, TANK, IMAGE_DECAL, CLADDING, WALL_LAMP, STREET_LAMP]) registerFamily(f);
 
 const t = (id: string, fam: string, name: string, params: ComponentType['params'] = {}): ComponentType => ({ id, family: fam, name, params });
 
 /** Tipos incluídos (variações prontas de cada família). */
 export const BUILTIN_TYPES: ComponentType[] = [
+  t('lamp-lantern', 'wall-lamp', 'Arandela lanterna'),
+  t('lamp-box', 'wall-lamp', 'Arandela moderna', { style: 'box' }),
+  t('lamp-globe', 'wall-lamp', 'Arandela globo', { style: 'globe', lightColor: '#fff1d8' }),
+  t('street-modern', 'street-lamp', 'Poste moderno'),
+  t('street-classic', 'street-lamp', 'Poste clássico', { style: 'classic', height: 3.6 }),
+  t('garden-bollard', 'street-lamp', 'Balizador de jardim', { style: 'garden', height: 0.8 }),
   t('area-stone', 'cladding', 'Revestimento de pedra'),
   t('area-brick', 'cladding', 'Revestimento de tijolo', { finish: 'brick', color: '#a8553a', color2: '#d8d2c6', thick: 0.02 }),
   t('area-wood', 'cladding', 'Revestimento de madeira', { finish: 'wood', color: '#8a5f3e', color2: '#2c241d', thick: 0.025 }),

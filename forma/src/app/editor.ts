@@ -9,6 +9,7 @@ import { mountInspector } from '../f3/ui/inspector';
 import { mountCatalog } from '../f3/ui/catalog';
 import { mountLayers } from '../f3/ui/layers';
 import { mountPalette } from '../f3/ui/palette';
+import { mountTime } from '../f3/ui/time';
 import { loadAutosave, saveFile, openFileWithNotes, download, fileName } from '../f3/io/persist';
 import { exportGLB, exportOBJ, exportGameJSON } from '../f3/io/export';
 
@@ -26,6 +27,7 @@ mountInspector(editor);
 mountCatalog(editor);
 mountLayers(editor);
 mountPalette(editor);
+mountTime(editor);
 (globalThis as { forma3?: Editor3 }).forma3 = editor;
 
 const root = editor.shell.root;

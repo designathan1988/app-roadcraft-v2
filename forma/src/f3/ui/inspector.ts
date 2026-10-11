@@ -2,7 +2,7 @@
 // face, componente ou componente de regra). Cada campo grava ao mudar.
 import type { Editor3 } from '../editor/editor';
 import type { Building3, FacadeRule, RoofKind, Solid } from '../model/schema';
-import { findSolid, planCenter, rotateSolid, translateSolid } from '../model/ops';
+import { planCenter, rotateSolid, translateSolid } from '../model/ops';
 
 /** Centro do volume (média dos vértices), arredondado para mostrar. */
 const centerOf = (s: Solid): [number, number] => {
@@ -16,7 +16,7 @@ import { resolveParams, type ParamDef } from '../families/family';
 import { icon } from './icons';
 import { changeLevels, courtyardIn, FACADE_PRESETS, podiumUnder, presetRules, setbackOn } from '../model/quick';
 import { addBands, planBox, type BandPreset } from '../model/modeling';
-import { polish } from './kit';
+import { closeOnOutside, polish } from './kit';
 import { bindPaintPanel, paintPanel } from './materials';
 
 const ROOFS: [RoofKind, string, string][] = [
@@ -274,12 +274,11 @@ function elementsPanel(ed: Editor3): string {
   const all = ed.elements();
   const picked = all.filter((e) => ed.sel.elems.includes(e.key));
   const types = [...new Set(picked.map((e) => e.type))];
-  const names = types.map((t) => typeById(t, ed.project)?.name ?? t);
   const btn = (op: string, label: string, title: string) => '<button class="f3-btn" data-sel="' + op + '" title="' + title + '">' + label + '</button>';
   const t = types.length === 1 ? typeById(types[0]!, ed.project) : undefined;
   const f = t && family(t.family);
   const users = t ? all.filter((e) => e.type === t.id).length : 0;
-  let params = '';
+  let params: string;
   if (t && f) {
     const scope = ed.elemScope;
     params =
@@ -660,7 +659,7 @@ function menu(anchor: HTMLElement, items: [string, () => void][]): void {
       m.remove();
     }),
   );
-  setTimeout(() => document.addEventListener('pointerdown', (e) => !m.contains(e.target as Node) && m.remove(), { once: true }), 0);
+  closeOnOutside(m, () => m.remove());
 }
 
 export { allFamilies };

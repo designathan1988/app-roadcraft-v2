@@ -65,6 +65,8 @@ export interface FaceInfo {
   smooth?: boolean;
   /** Componente que abriu o vão (faces 'reveal'). */
   item?: ID;
+  /** Número do cômodo atrás de um vão (piso, teto e paredes do mesmo cômodo). */
+  room?: number;
 }
 
 export class FaceTable {

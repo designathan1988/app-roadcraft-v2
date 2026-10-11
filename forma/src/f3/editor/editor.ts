@@ -5,8 +5,8 @@
 // gravam no histórico ao soltar.
 import * as THREE from 'three';
 import type { Building3, ID, Item, MaterialRef, Project3, Solid, Vec2, Vec3 } from '../model/schema';
-import { building as newBuilding, circlePlan, levelsFor, planVertices, project as newProject, rectPlan, roofSpec, solid as newSolid, uid } from '../model/defaults';
-import { bendEdge, cloneBuilding, cloneSolid, dirToLocal, edgeNormal, findSolid, mirrorSolid, moveVertex, planCenter, pushEdge, removeVertex, rotateSolid, splitEdge, toLocal, toWorld, topAt, translateSolid } from '../model/ops';
+import { building as newBuilding, circlePlan, levelsFor, planVertices, project as newProject, roofSpec, solid as newSolid, uid } from '../model/defaults';
+import { bendEdge, cloneBuilding, cloneSolid, dirToLocal, edgeNormal, findSolid, mirrorSolid, moveVertex, planCenter, planValid as planValidOps, pushEdge, removeVertex, rotateSolid, splitEdge, toLocal, topRing, toWorld, topAt, translateSolid } from '../model/ops';
 import { solidRings } from '../eval/body';
 import { extrudeSide, insetSide, insetTop, offsetCopy, offsetSolid, setSolidSize, splitAtHeight } from '../model/modeling';
 import { activeLayer } from '../model/layers';
@@ -18,9 +18,10 @@ import { Handles, HANDLE_COLORS, type Handle } from './handles';
 import { Inference, SNAP_COLORS, type Snap } from './infer';
 import { createShell3, type Shell3 } from '../ui/shell';
 import { icon } from '../ui/icons';
+import { closeOnOutside } from '../ui/kit';
 import { family, typeById } from '../families/index';
 import { resolveParams } from '../families/family';
-import { emptyParts3, FrameSink, frameMatrix } from '../eval/parts';
+import { emptyParts3, faceMatrix, FrameSink } from '../eval/parts';
 import { buildPartsMesh, type PartsMesh } from '../render/parts';
 import type { FaceInfo } from '../eval/faces';
 import { between, column, elemKey, elementsOf, grow, row, rowOnFace, sameFace, sameType, shift, shrink, type Elem } from './elements';
@@ -430,6 +431,7 @@ export class Editor3 {
       c.y = Math.max(...b.solids.filter((x) => x.op === 'add').map((x) => x.base + x.height), 1) + 0.6;
       const R = Math.max(box.getSize(new THREE.Vector3()).length() / 2 + 1.5, 4);
       handles.push(...this.moveHandles(c, ax, az), this.rotateHandle(c, R));
+      handles.push(...this.sizeHandles(b, b.solids.filter((x) => x.op === 'add'), Math.max(...b.solids.map((x) => x.base + x.height), 0)));
     } else if (this.sel.item) {
       const it = this.activeItem();
       if (it && (it.host.kind === 'free' || it.host.kind === 'roof')) {
@@ -469,6 +471,7 @@ export class Editor3 {
         handles.push(...this.moveHandles(over, ax, az));
         const R = Math.max(...r.outer.pts.map((p) => Math.hypot(p[0] - ctr[0], p[1] - ctr[1]))) + 1.2;
         handles.push(this.rotateHandle(over, R));
+        handles.push(...this.sizeHandles(b, [s0], r.top));
       }
       if (!faceMode || this.sel.face?.kind === 'top') handles.push({ kind: 'height', at: top, dir: new THREE.Vector3(0, 1, 0), solid: s0.id, color: HANDLE_COLORS.y, label: 'Altura' });
       if (!faceMode && (s0.base > 0.01 || s0.op !== 'add')) handles.push({ kind: 'lift', at: base, dir: new THREE.Vector3(0, -1, 0), solid: s0.id, color: HANDLE_COLORS.y, label: 'Elevação' });
@@ -500,6 +503,38 @@ export class Editor3 {
     this.drawSelDims();
   }
 
+  /**
+   * Alças de tamanho na caixa da planta (eixos do edifício), um pouco para
+   * fora dela (não disputam o clique com os vértices): lados puxam um eixo,
+   * cantos os dois; o lado oposto fica parado. Shift mantém a proporção.
+   */
+  private sizeHandles(b: Building3, solids: Solid[], y: number): Handle[] {
+    if (!solids.length) return [];
+    let x0 = Infinity,
+      x1 = -Infinity,
+      z0 = Infinity,
+      z1 = -Infinity;
+    for (const s of solids)
+      for (const v of s.plan.outer) {
+        x0 = Math.min(x0, v.p[0]);
+        x1 = Math.max(x1, v.p[0]);
+        z0 = Math.min(z0, v.p[1]);
+        z1 = Math.max(z1, v.p[1]);
+      }
+    const M = this.view.buildingMatrix(b);
+    const mid = new THREE.Vector3((x0 + x1) / 2, y, (z0 + z1) / 2).applyMatrix4(M);
+    const off = this.view.worldPerPixel(mid) * 16;
+    const out: Handle[] = [];
+    for (const sx of [-1, 0, 1])
+      for (const sz of [-1, 0, 1]) {
+        if (!sx && !sz) continue;
+        const x = sx < 0 ? x0 - off : sx > 0 ? x1 + off : (x0 + x1) / 2;
+        const z = sz < 0 ? z0 - off : sz > 0 ? z1 + off : (z0 + z1) / 2;
+        out.push({ kind: 'size', at: new THREE.Vector3(x, y + 0.02, z).applyMatrix4(M), sx, sz, color: '#ffffff', label: sx && sz ? 'Tamanho (arraste o canto; Shift mantém a proporção; digite 12x8)' : sx ? 'Largura (arraste; digite a medida)' : 'Profundidade (arraste; digite a medida)' });
+      }
+    return out;
+  }
+
   private moveHandles(c: THREE.Vector3, ax: THREE.Vector3, az: THREE.Vector3): Handle[] {
     return [
       { kind: 'move-x', at: c, dir: ax, color: HANDLE_COLORS.x, label: 'Mover no eixo vermelho' },
@@ -524,7 +559,7 @@ export class Editor3 {
     }
     const s = this.activeSolid();
     const btn = (cmd: string, ic: string, label: string, pressed?: boolean, title = label) => `<button data-ctx="${cmd}" title="${title}" ${pressed !== undefined ? `aria-pressed="${pressed}"` : ''}>${icon(ic)}${label ? `<span>${label}</span>` : ''}</button>`;
-    let html = '';
+    let html: string;
     if (this.context !== b.id) html = btn('enter', 'enter', 'Editar', undefined, 'Editar o edifício (duplo clique)') + '<span class="sep"></span>' + btn('dup', 'copy', '', undefined, 'Duplicar · Ctrl+D') + btn('rot90', 'rotate', '', undefined, 'Girar 90°') + btn('del', 'trash', '', undefined, 'Excluir · Delete');
     else if (this.sel.item) html = btn('dup', 'copy', '', undefined, 'Duplicar · Ctrl+D') + btn('del', 'trash', '', undefined, 'Excluir · Delete');
     else if (s)
@@ -538,27 +573,10 @@ export class Editor3 {
         btn('del', 'trash', '', undefined, 'Excluir · Delete');
     else html = btn('exit', 'exit', 'Sair', undefined, 'Sair do edifício · Esc') + btn('dup', 'copy', '', undefined, 'Duplicar edifício');
     bar.innerHTML = html;
-    // Acima do topo da seleção.
-    const M = this.view.buildingMatrix(b);
-    let top = new THREE.Vector3();
-    const list = s ? [s] : b.solids;
-    let y = 0,
-      cx = 0,
-      cz = 0,
-      n = 0;
-    for (const x of list) {
-      y = Math.max(y, x.base + x.height);
-      const c = planCenter(x);
-      cx += c[0];
-      cz += c[1];
-      n++;
-    }
-    top = new THREE.Vector3(cx / Math.max(1, n), y + 1.5, cz / Math.max(1, n)).applyMatrix4(M);
-    const sp = this.view.toScreen(top);
-    const r = this.shell.view.getBoundingClientRect();
-    bar.hidden = sp.behind;
-    bar.style.left = `${Math.max(120, Math.min(r.width - 120, sp.x))}px`;
-    bar.style.top = `${Math.max(56, Math.min(r.height - 10, sp.y - 8))}px`;
+    // Fixa no alto da vista: nunca cobre o gizmo, as cotas nem o modelo.
+    bar.hidden = false;
+    bar.style.left = '50%';
+    bar.style.top = '10px';
     bar.querySelectorAll<HTMLButtonElement>('button').forEach((x) => x.addEventListener('click', () => this.command(x.dataset.ctx!)));
   }
 
@@ -878,8 +896,26 @@ export class Editor3 {
         const n = edgeNormal(s, edge) ?? [0, 0];
         put(new THREE.Vector3(m[0] + n[0] * 0.9, s.base + 0.05, m[1] + n[1] * 0.9).applyMatrix4(M), `${fmt(v.len)} m`);
       }
-      const c = planCenter(s);
-      put(new THREE.Vector3(c[0], s.base + s.height + 0.9, c[1]).applyMatrix4(M), `↕ ${fmt(s.height)} m`);
+      // Altura ao lado da quina mais à direita na tela, a meia altura (o centro é do gizmo).
+      let best: THREE.Vector3 | null = null;
+      let bx = -Infinity;
+      for (const p of r.outer.pts) {
+        const w = new THREE.Vector3(p[0], s.base + s.height / 2, p[1]).applyMatrix4(M);
+        const sp = this.view.toScreen(w);
+        if (!sp.behind && sp.x > bx) {
+          bx = sp.x;
+          best = w;
+        }
+      }
+      if (best) {
+        const sp = this.view.toScreen(best);
+        const el = document.createElement('div');
+        el.className = 'f3-dim f3-sdim';
+        el.textContent = `↕ ${fmt(s.height)} m`;
+        el.style.left = `${sp.x + 30}px`;
+        el.style.top = `${sp.y}px`;
+        this.shell.view.appendChild(el);
+      }
       return;
     }
     if (this.context !== b.id) {
@@ -890,7 +926,8 @@ export class Editor3 {
       const top = Math.max(...b.solids.map((s) => s.base + s.height));
       put(new THREE.Vector3((Math.min(...xs) + Math.max(...xs)) / 2, 0.1, Math.max(...zs) + 1.2).applyMatrix4(M), `${fmt(Math.max(...xs) - Math.min(...xs))} m`);
       put(new THREE.Vector3(Math.max(...xs) + 1.2, 0.1, (Math.min(...zs) + Math.max(...zs)) / 2).applyMatrix4(M), `${fmt(Math.max(...zs) - Math.min(...zs))} m`);
-      put(new THREE.Vector3((Math.min(...xs) + Math.max(...xs)) / 2, top + 1, (Math.min(...zs) + Math.max(...zs)) / 2).applyMatrix4(M), `↕ ${fmt(top)} m`);
+      // Altura numa quina vertical (o centro do topo é do gizmo).
+      put(new THREE.Vector3(Math.max(...xs) + 1.2, top / 2, Math.max(...zs) + 1.2).applyMatrix4(M), `↕ ${fmt(top)} m`);
     }
   }
 
@@ -1064,7 +1101,7 @@ export class Editor3 {
           this.setTool(b.dataset.fly as Tool);
         }),
       );
-      setTimeout(() => document.addEventListener('pointerdown', (e) => !fly.contains(e.target as Node) && this.closeFly(), { once: true }), 0);
+      closeOnOutside(fly, () => this.closeFly(), grp);
     };
     grp.addEventListener('pointerdown', () => {
       hold = window.setTimeout(() => {
@@ -1241,11 +1278,17 @@ export class Editor3 {
         }
         return;
       }
+      // Clique de novo num edifício já selecionado (sem arrastar) entra nele e pega o volume.
+      const drill = hit && this.context !== hit.building.id && this.sel.building === hit.building.id && !e.shiftKey && !this.sel.others.length ? hit.face?.solid : undefined;
       this.clickSelect(hit, e);
+      this.drawHover(null);
       // Arrastar o que está selecionado move (direto no modelo).
       const b = this.activeBuilding();
       if (hit && b && hit.building.id === b.id) {
-        if (this.context !== b.id) this.beginMoveBuilding(b, e, hit);
+        if (this.context !== b.id) {
+          this.beginMoveBuilding(b, e, hit);
+          if (this.drag && drill) this.drag.data.drill = drill;
+        }
         else if (this.sel.item) this.beginMoveItem(b, e, hit);
         else if (this.sel.solids.length) this.beginMoveSolids(b, e, hit);
       }
@@ -1274,7 +1317,8 @@ export class Editor3 {
       // Shift+clique: vários edifícios (para alinhar e distribuir).
       if (e.shiftKey && this.sel.building && this.sel.building !== b.id) {
         const others = new Set(this.sel.others);
-        others.has(b.id) ? others.delete(b.id) : others.add(b.id);
+        if (others.has(b.id)) others.delete(b.id);
+        else others.add(b.id);
         return this.select({ building: this.sel.building, others: [...others] });
       }
       return this.select({ building: b.id });
@@ -1284,7 +1328,10 @@ export class Editor3 {
       if (key && (e.shiftKey || e.ctrlKey) && this.sel.elems.length) {
         // Shift: acrescenta/tira; Ctrl+Shift: o trecho entre o último e este.
         const set = e.ctrlKey && e.shiftKey ? new Set([...this.sel.elems, ...between(this.elements(), this.sel.elems[this.sel.elems.length - 1]!, key)]) : new Set(this.sel.elems);
-        if (!(e.ctrlKey && e.shiftKey)) set.has(key) ? set.delete(key) : set.add(key);
+        if (!(e.ctrlKey && e.shiftKey)) {
+          if (set.has(key)) set.delete(key);
+          else set.add(key);
+        }
         return this.select({ building: b.id, elems: [...set], item: set.size === 1 && hit.part.item ? hit.part.item : null });
       }
       if (hit.part.item) return this.select({ building: b.id, item: hit.part.item, elems: key ? [key] : [] });
@@ -1295,7 +1342,8 @@ export class Editor3 {
     const sid = f.solid;
     if (e.shiftKey && !this.sel.item) {
       const set = new Set(this.sel.solids);
-      set.has(sid) ? set.delete(sid) : set.add(sid);
+      if (set.has(sid)) set.delete(sid);
+      else set.add(sid);
       return this.select({ building: b.id, solids: [...set] });
     }
     // Primeiro clique: o volume; clique de novo no mesmo volume: a face.
@@ -1328,14 +1376,148 @@ export class Editor3 {
     if (this.drag) return this.updateDrag(e);
     if (this.tool === 'select') {
       this.handles.setHover(this.handles.hit(e));
-      this.view.renderer.domElement.style.cursor = this.handles.hover ? 'grab' : 'default';
-      if (this.handles.hover) this.shell.status.hint.textContent = this.handles.hover.label;
+      const h = this.handles.hover;
+      if (h) {
+        this.shell.status.hint.textContent = h.label;
+        this.drawHover(null);
+        this.view.renderer.domElement.style.cursor = h.kind === 'size' ? (h.sx && h.sz ? (h.sx * h.sz > 0 ? 'nwse-resize' : 'nesw-resize') : 'ew-resize') : h.kind === 'rotate' ? 'grab' : 'move';
+        return;
+      }
+      const hit = this.pickAt(e);
+      this.drawHover(hit);
+      const b = this.activeBuilding();
+      const onSel = !!hit && !!b && hit.building.id === b.id && (this.context !== b.id || (hit.face && this.sel.solids.includes(hit.face.solid)) || (!!hit.part?.item && hit.part.item === this.sel.item));
+      this.view.renderer.domElement.style.cursor = !hit ? 'default' : onSel ? 'move' : 'pointer';
       return;
     }
     if (this.tool === 'rect' || this.tool === 'circle' || this.tool === 'polygon') return this.drawMove(e);
     if (this.tool === 'place') return this.placeHover(e);
     if (this.tool === 'block') return this.blockAt(e, false);
     if (this.tool === 'tape') return this.tapeAt(e, false);
+  }
+
+  private hoverKey = '';
+  private hoverOverlay = new THREE.Group();
+
+  /**
+   * Pré-realce: mostra o que o próximo clique vai selecionar (edifício,
+   * volume, face ou elemento), como o SketchUp, antes de clicar.
+   */
+  private drawHover(hit: Hit | null): void {
+    if (!this.hoverOverlay.parent) this.view.overlay.add(this.hoverOverlay);
+    let key = '';
+    let what: { b: Building3; solids?: ID[]; face?: { solid: ID; kind: string; edge?: ID }; part?: Hit['part'] } | null = null;
+    if (hit && !this.drag) {
+      const b = hit.building;
+      if (this.context !== b.id) {
+        // Edifício já selecionado: o clique entra e pega o volume sob o cursor.
+        if (this.sel.building === b.id && hit.face) what = { b, solids: [hit.face.solid] };
+        else if (this.sel.building !== b.id) what = { b, solids: b.solids.filter((s) => s.op === 'add').map((s) => s.id) };
+      } else if (hit.part && (hit.part.item || hit.part.rule)) what = { b, part: hit.part };
+      else if (hit.face) {
+        const already = this.sel.solids.length === 1 && this.sel.solids[0] === hit.face.solid;
+        if (already && !this.sel.face && (hit.face.kind === 'side' || hit.face.kind === 'top' || hit.face.kind === 'roof')) what = { b, face: { solid: hit.face.solid, kind: hit.face.kind, edge: hit.face.edge } };
+        else if (!already) what = { b, solids: [hit.face.solid] };
+      }
+      if (what) key = `${b.id}|${what.solids?.join(',') ?? ''}|${what.face ? what.face.solid + what.face.kind + (what.face.edge ?? '') : ''}|${what.part ? (what.part.item ?? '') + (what.part.rule ?? '') + (what.part.key ?? '') : ''}|${this.store.revision.get(b.id)}`;
+    }
+    if (key === this.hoverKey) return;
+    this.hoverKey = key;
+    for (const c of [...this.hoverOverlay.children]) {
+      this.hoverOverlay.remove(c);
+      const m = c as THREE.Mesh;
+      m.geometry?.dispose();
+      (m.material as THREE.Material)?.dispose();
+    }
+    if (what) {
+      const M = this.view.buildingMatrix(what.b);
+      const color = '#5b9cff';
+      const addLine = (pts: THREE.Vector3[], closed = true) => {
+        const l = new (closed ? THREE.LineLoop : THREE.Line)(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.95 }));
+        l.renderOrder = 19;
+        this.hoverOverlay.add(l);
+      };
+      for (const id of what.solids ?? []) {
+        const s = findSolid(what.b, id);
+        if (!s) continue;
+        const r = solidRings(s);
+        addLine(r.outer.pts.map((p) => new THREE.Vector3(p[0], r.base + 0.02, p[1]).applyMatrix4(M)));
+        addLine(r.topOuter.map((p) => new THREE.Vector3(p[0], r.top, p[1]).applyMatrix4(M)));
+        r.outer.pts.forEach((p, i) => {
+          if (r.outer.segs[i]!.curved) return;
+          addLine([new THREE.Vector3(p[0], r.base, p[1]).applyMatrix4(M), new THREE.Vector3(r.topOuter[i]![0], r.top, r.topOuter[i]![1]).applyMatrix4(M)], false);
+        });
+      }
+      const built = this.view.built.get(what.b.id);
+      // Véu azul nos volumes sob o cursor (o contorno sozinho some de longe).
+      if (what.solids?.length && built) {
+        const set = new Set(what.solids);
+        const { positions: P, indices: I, faceOf } = built.ev.shell;
+        const pos: number[] = [];
+        for (let t = 0; t < I.length / 3; t++) {
+          const f = built.ev.faces[faceOf[t]!];
+          if (!f || !set.has(f.solid) || f.kind.startsWith('room')) continue;
+          for (let j = 0; j < 3; j++) {
+            const i = I[t * 3 + j]! * 3;
+            pos.push(P[i]!, P[i + 1]!, P[i + 2]!);
+          }
+        }
+        if (pos.length) {
+          const g = new THREE.BufferGeometry();
+          g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+          const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.16, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+          m.applyMatrix4(M);
+          m.renderOrder = 14;
+          this.hoverOverlay.add(m);
+        }
+      }
+      if (what.face && built) {
+        const f0 = what.face;
+        const { positions: P, indices: I, faceOf } = built.ev.shell;
+        const pos: number[] = [];
+        for (let t = 0; t < I.length / 3; t++) {
+          const f = built.ev.faces[faceOf[t]!];
+          if (!f || f.solid !== f0.solid) continue;
+          if (f0.kind === 'side' ? !(f.kind === 'side' && f.edge === f0.edge) : !(f.kind === 'top' || f.kind === 'roof')) continue;
+          for (let j = 0; j < 3; j++) {
+            const i = I[t * 3 + j]! * 3;
+            pos.push(P[i]!, P[i + 1]!, P[i + 2]!);
+          }
+        }
+        if (pos.length) {
+          const g = new THREE.BufferGeometry();
+          g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+          const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+          m.applyMatrix4(M);
+          m.renderOrder = 14;
+          this.hoverOverlay.add(m);
+        }
+      }
+      if (what.part && built) {
+        const tag = what.part;
+        const pos: number[] = [];
+        const mm = new THREE.Matrix4();
+        for (const pl of built.ev.placements) {
+          if (pl.tag.item !== tag.item || pl.tag.rule !== tag.rule || pl.tag.key !== tag.key) continue;
+          const [w, h, dd] = pl.family.size(pl.params);
+          mm.fromArray(pl.frame).premultiply(M);
+          const c = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z).applyMatrix4(mm);
+          const xs = [-w / 2 - 0.04, w / 2 + 0.04],
+            ys = [-0.04, h + 0.04],
+            zs = [-0.04, Math.max(0.12, dd) + 0.04];
+          const k = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => c(xs[i & 1]!, ys[(i >> 1) & 1]!, zs[(i >> 2) & 1]!));
+          for (const [a, b2] of [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]] as [number, number][]) pos.push(...k[a]!.toArray(), ...k[b2]!.toArray());
+        }
+        if (pos.length) {
+          const g = new THREE.BufferGeometry();
+          g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+          const l = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.95 }));
+          l.renderOrder = 19;
+          this.hoverOverlay.add(l);
+        }
+      }
+    }
+    this.view.mark();
   }
 
   private onUp(e: PointerEvent): void {
@@ -1375,6 +1557,36 @@ export class Editor3 {
       if (!inCtx) return this.beginMoveBuilding(b, e, null, h);
       if (this.sel.item) return this.beginMoveItem(b, e, null, h);
       if (s) return this.beginMoveSolids(b, e, null, h);
+    }
+    if (h.kind === 'size') {
+      const ids = inCtx ? (s ? [s.id] : []) : b.solids.filter((x) => x.op === 'add').map((x) => x.id);
+      if (!ids.length) return;
+      let x0 = Infinity,
+        x1 = -Infinity,
+        z0 = Infinity,
+        z1 = -Infinity;
+      for (const id of ids)
+        for (const v of findSolid(b, id)!.plan.outer) {
+          x0 = Math.min(x0, v.p[0]);
+          x1 = Math.max(x1, v.p[0]);
+          z0 = Math.min(z0, v.p[1]);
+          z1 = Math.max(z1, v.p[1]);
+        }
+      const all = !inCtx;
+      this.startDrag('size', b, e, { handle: 'size', sx: h.sx, sz: h.sz, box: [x0, x1, z0, z1], y: h.at.y, ids, all }, true);
+      this.preview.add(b.id);
+      this.setMeasure(h.sx && h.sz ? 'Tamanho' : h.sx ? 'Largura' : 'Profundidade', (t) => {
+        const m = /^\s*([\d.,]+)\s*(?:[x*;\s]\s*([\d.,]+))?\s*$/.exec(t);
+        if (!m) return false;
+        const a = parseFloat(m[1]!.replace(',', '.')),
+          c = m[2] ? parseFloat(m[2].replace(',', '.')) : NaN;
+        const W0 = x1 - x0,
+          D0 = z1 - z0;
+        const wantW = h.sx ? a : W0,
+          wantD = h.sz ? (h.sx ? (Number.isFinite(c) ? c : (a / W0) * D0) : a) : D0;
+        return this.change(b.id, (x) => this.applySize(x, ids, [x0, x1, z0, z1], h.sx ?? 0, h.sz ?? 0, wantW / W0, wantD / D0, all), `Tamanho ${fmt(wantW)} × ${fmt(wantD)} m.`);
+      });
+      return;
     }
     if (h.kind === 'rotate') {
       const c = h.ring ? ringCenter(h.ring) : h.at;
@@ -1496,7 +1708,10 @@ export class Editor3 {
     const it = this.activeItem();
     if (!it) return;
     void hit;
-    this.startDrag('move-item', b, e, { handle: h?.kind ?? 'move-xz', axis: h?.dir?.clone() ?? null, id: it.id }, true);
+    // Altura real da peça (no telhado, a da superfície onde ela está): o arrasto anda nessa altura.
+    const pl = this.view.built.get(b.id)?.ev.placements.find((q) => q.tag.item === it.id);
+    const y0 = pl ? pl.frame[13]! : it.host.kind === 'free' ? it.host.p[1] : 0;
+    this.startDrag('move-item', b, e, { handle: h?.kind ?? 'move-xz', axis: h?.dir?.clone() ?? null, at: h?.at.clone() ?? null, id: it.id, y0 }, true);
   }
 
   private setMoveMeasure(): void {
@@ -1598,6 +1813,31 @@ export class Editor3 {
     const b = this.store.building(d.bid);
     if (!b) return;
     const orig = d.origBuilding;
+    if (d.kind === 'size') {
+      const p = this.view.onPlane(e, d.data.y as number);
+      if (!p) return;
+      const [x0, x1, z0, z1] = d.data.box as number[];
+      const l = toLocal(b, [p.x, p.z]);
+      const g = !e.altKey && this.infer.enabled ? this.infer.grid : 0;
+      const q = (v: number) => (g ? Math.round(v / g) * g : v);
+      const sx = d.data.sx as number,
+        sz = d.data.sz as number;
+      const W0 = x1! - x0!,
+        D0 = z1! - z0!;
+      let w = sx > 0 ? q(l[0] - x0!) : sx < 0 ? q(x1! - l[0]) : W0;
+      let dd = sz > 0 ? q(l[1] - z0!) : sz < 0 ? q(z1! - l[1]) : D0;
+      w = Math.max(0.3, w);
+      dd = Math.max(0.3, dd);
+      let fx = w / W0,
+        fz = dd / D0;
+      if (e.shiftKey && sx && sz) fx = fz = Math.max(fx, fz);
+      b.solids = structuredClone(orig.solids);
+      b.items = structuredClone(orig.items);
+      if (this.applySize(b, d.data.ids as ID[], [x0!, x1!, z0!, z1!], sx, sz, fx, fz, !!d.data.all)) this.store.touch([b.id]);
+      this.showDim(`${fmt(W0 * fx)} × ${fmt(D0 * fz)} m`, e);
+      this.drawSelection();
+      return;
+    }
     if (d.kind === 'move-building' || d.kind === 'move-solids') {
       const y = d.kind === 'move-solids' ? (d.data.y as number) : 0;
       const p0 = d.data.p0 as THREE.Vector3;
@@ -1641,12 +1881,42 @@ export class Editor3 {
         }
         return;
       }
-      if ((it.host.kind === 'free' || it.host.kind === 'roof') && (io.host.kind === 'free' || io.host.kind === 'roof')) {
+      if (it.host.kind === 'roof' && io.host.kind === 'roof') {
+        // Peça de telhado desliza sobre o telhado: o que está sob o cursor, ou
+        // o plano na altura dela preso à borda do telhado (nunca cai no chão).
+        const axis = d.data.axis as THREE.Vector3 | null;
+        let sid = io.host.solid;
+        let local: Vec2 | null = null;
+        if (axis && d.data.at) {
+          let t = this.dragAlong(d, e, d.data.at as THREE.Vector3, axis);
+          if (this.infer.enabled && !e.altKey) t = Math.round(t / 0.1) * 0.1;
+          const dl = dirToLocal(b, [axis.x, axis.z]);
+          local = [io.host.p[0] + dl[0] * t, io.host.p[1] + dl[1] * t];
+        } else {
+          const hit = this.pickAt(e, b.id);
+          const hs = hit?.face && (hit.face.kind === 'roof' || hit.face.kind === 'top') ? findSolid(b, hit.face.solid) : undefined;
+          if (hit && hs && hs.op === 'add') {
+            sid = hs.id;
+            local = toLocal(b, [hit.point.x, hit.point.z]);
+          } else {
+            const p = this.view.onPlane(e, d.data.y0 as number);
+            if (p) local = toLocal(b, [p.x, p.z]);
+          }
+          if (local && this.infer.enabled && !e.altKey) local = [Math.round(local[0] / 0.1) * 0.1, Math.round(local[1] / 0.1) * 0.1];
+        }
+        const host = findSolid(b, sid);
+        if (!local || !host) return;
+        it.host.solid = sid;
+        it.host.p = clampInside(local, topRing(host), 0.3);
+        this.store.touch([b.id]);
+        this.showDim('no telhado', e);
+        return;
+      }
+      if (it.host.kind === 'free' && io.host.kind === 'free') {
         const snap = this.infer.snap(e, io.host.kind === 'free' ? io.host.p[1] : 0, null, null);
         if (!snap) return;
         const l = toLocal(b, [snap.p.x, snap.p.z]);
-        if (it.host.kind === 'free' && io.host.kind === 'free') it.host.p = [l[0], io.host.p[1], l[1]];
-        else if (it.host.kind === 'roof') it.host.p = [l[0], l[1]];
+        it.host.p = [l[0], io.host.p[1], l[1]];
         this.store.touch([b.id]);
       }
       return;
@@ -1740,6 +2010,41 @@ export class Editor3 {
       if (ok) this.store.touch([b.id]);
       this.drawSelection();
     }
+  }
+
+  /**
+   * Escala as plantas dos volumes pela caixa, com o lado oposto à alça parado
+   * (âncora). No edifício inteiro, as peças soltas acompanham.
+   */
+  private applySize(b: Building3, ids: ID[], box: number[], sx: number, sz: number, fx: number, fz: number, all: boolean): boolean {
+    const [x0, x1, z0, z1] = box as [number, number, number, number];
+    const ax = sx > 0 ? x0 : sx < 0 ? x1 : (x0 + x1) / 2;
+    const az = sz > 0 ? z0 : sz < 0 ? z1 : (z0 + z1) / 2;
+    const k = Math.min(fx, fz);
+    const map = (p: Vec2): Vec2 => [ax + (p[0] - ax) * fx, az + (p[1] - az) * fz];
+    for (const id of ids) {
+      const s = findSolid(b, id);
+      if (!s) continue;
+      const before = structuredClone(s.plan);
+      for (const ring of [s.plan.outer, ...s.plan.holes])
+        for (const v of ring) {
+          v.p = map(v.p);
+          if (v.round) v.round *= k;
+          if (v.chamfer) v.chamfer *= k;
+        }
+      if (!planValidOps(s.plan)) {
+        s.plan = before;
+        return false;
+      }
+    }
+    if (all)
+      for (const it of b.items) {
+        if (it.host.kind === 'free') {
+          const q = map([it.host.p[0], it.host.p[2]]);
+          it.host.p = [q[0], it.host.p[1], q[1]];
+        } else if (it.host.kind === 'roof') it.host.p = map(it.host.p);
+      }
+    return true;
   }
 
   /** Cota do piso do pavimento sob uma peça de face (relativa à base do sólido). */
@@ -1882,6 +2187,11 @@ export class Editor3 {
       // Clique num vértice: seleciona o canto (arredondar, chanfrar, apagar).
       this.store.revert();
       return this.select({ building: this.sel.building, solids: this.sel.solids, vertex: d.data.vertex as ID });
+    }
+    if (!d.moved && d.kind === 'move-building' && d.data.drill) {
+      this.store.revert();
+      this.enter(d.bid);
+      return this.select({ building: d.bid, solids: [d.data.drill as ID] });
     }
     if (!d.moved) {
       this.store.revert();
@@ -2341,7 +2651,7 @@ export class Editor3 {
       if (this.infer.enabled) s = Math.round(s / 0.1) * 0.1;
       const ds = s - fr.s0;
       const p: Vec3 = [fr.o[0] + fr.u[0] * ds + fr.v[0] * y, fr.o[1] + fr.u[1] * ds + fr.v[1] * y, fr.o[2] + fr.u[2] * ds + fr.v[2] * y];
-      return { b, host: { kind: 'face', solid: solid.id, edge: hit.face.edge!, u: s, y }, frame: frameMatrix(p, fr.u, fr.v, fr.n), label: `${fmt(s)} m ao longo · ${fmt(y + solid.base)} m de altura` };
+      return { b, host: { kind: 'face', solid: solid.id, edge: hit.face.edge!, u: s, y }, frame: faceMatrix(p, fr.u, fr.v, fr.n), label: `${fmt(s)} m ao longo · ${fmt(y + solid.base)} m de altura` };
     }
     if (f.host === 'roof' && hit?.face && (hit.face.kind === 'roof' || hit.face.kind === 'top')) {
       const b = hit.building;
@@ -2628,6 +2938,46 @@ export class Editor3 {
     this.view.dispose();
     this.shell.root.remove();
   }
+}
+
+/** O ponto, ou o mais perto dele dentro do polígono (recuado `inset`). */
+function clampInside(p: Vec2, poly: Vec2[], inset: number): Vec2 {
+  const inside = (q: Vec2) => {
+    let c = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i]!,
+        b = poly[j]!;
+      if (a[1] > q[1] !== b[1] > q[1] && q[0] < ((b[0] - a[0]) * (q[1] - a[1])) / (b[1] - a[1]) + a[0]) c = !c;
+    }
+    return c;
+  };
+  if (inside(p)) return p;
+  let best: Vec2 = p,
+    bd = Infinity;
+  let cx = 0,
+    cz = 0;
+  for (const q of poly) {
+    cx += q[0] / poly.length;
+    cz += q[1] / poly.length;
+  }
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i]!,
+      b = poly[(i + 1) % poly.length]!;
+    const abx = b[0] - a[0],
+      abz = b[1] - a[1];
+    const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * abx + (p[1] - a[1]) * abz) / (abx * abx + abz * abz || 1)));
+    const q: Vec2 = [a[0] + abx * t, a[1] + abz * t];
+    const d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    if (d < bd) {
+      bd = d;
+      best = q;
+    }
+  }
+  // Um pouco para dentro, em direção ao centro.
+  const dx = cx - best[0],
+    dz = cz - best[1],
+    l = Math.hypot(dx, dz) || 1;
+  return [best[0] + (dx / l) * inset, best[1] + (dz / l) * inset];
 }
 
 function esc(s: string): string {

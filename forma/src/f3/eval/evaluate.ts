@@ -128,7 +128,7 @@ export function evaluateBuilding(b: Building3, opts: EvalOptions = {}, project?:
       if (g && acc) for (const p of groupParapet(g, table, scope, (x) => covered.get(x.id))) acc = scope.keep(acc.add(p));
     }
     const parts = emptyParts3();
-    let placements: Placement[] = [];
+    const placements: Placement[] = [];
     if (acc && !opts.preview) {
       // Fachada sobre o sólido antes dos vãos: a parte visível de cada lado.
       const shell0 = toShell(acc);
@@ -140,6 +140,7 @@ export function evaluateBuilding(b: Building3, opts: EvalOptions = {}, project?:
       placements.push(...items);
       // Vãos: um sólido só com todos os recortes.
       const cuts: Manifold[] = [];
+      let roomCount = 0;
       for (const pl of placements) {
         if (!pl.opening) continue;
         const o = pl.opening;
@@ -152,7 +153,8 @@ export function evaluateBuilding(b: Building3, opts: EvalOptions = {}, project?:
         const room = o.room && o.room > 0.2 && pl.host ? roomFit(b, pl, o) : null;
         if (room && pl.host) {
           const rb = new MeshBuilder();
-          const ids = { floor: table.add({ kind: 'roomFloor', solid: pl.host.solid }), ceil: table.add({ kind: 'roomCeil', solid: pl.host.solid }), wall: table.add({ kind: 'roomWall', solid: pl.host.solid }) };
+          const n = roomCount++;
+          const ids = { floor: table.add({ kind: 'roomFloor', solid: pl.host.solid, room: n }), ceil: table.add({ kind: 'roomCeil', solid: pl.host.solid, room: n }), wall: table.add({ kind: 'roomWall', solid: pl.host.solid, room: n }) };
           roomBox(rb, pl.frame, room.hx, -room.below + 0.03, room.above, -room.depth, -o.depth + 0.002, ids);
           const rm = scope.keep(rb.toManifold(k));
           if (rm.status() === 'NoError' && !rm.isEmpty()) cuts.push(rm);
@@ -219,12 +221,20 @@ function roomFit(b: Building3, pl: Placement, o: { w: number; depth: number; roo
   let lo = minD,
     hi = o.depth + (o.room ?? 0);
   if (fits(minHx, hi)) lo = hi;
-  else for (let k = 0; k < 10; k++) (fits(minHx, (lo + hi) / 2) ? (lo = (lo + hi) / 2) : (hi = (lo + hi) / 2));
+  else
+    for (let k = 0; k < 10; k++) {
+      if (fits(minHx, (lo + hi) / 2)) lo = (lo + hi) / 2;
+      else hi = (lo + hi) / 2;
+    }
   const depth = lo;
   let a = minHx,
     z = o.w / 2 + 0.9;
   if (fits(z, depth)) a = z;
-  else for (let k = 0; k < 10; k++) (fits((a + z) / 2, depth) ? (a = (a + z) / 2) : (z = (a + z) / 2));
+  else
+    for (let k = 0; k < 10; k++) {
+      if (fits((a + z) / 2, depth)) a = (a + z) / 2;
+      else z = (a + z) / 2;
+    }
   return { hx: a, below, above, depth };
 }
 

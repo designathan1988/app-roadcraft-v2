@@ -109,7 +109,7 @@ export const CSS = `
 .f3-vcb input{width:90px;border:0;background:transparent;font:600 12px ui-monospace,Consolas,monospace;color:var(--ink);outline:none;padding:0}
 .f3-sepv{width:1px;height:16px;background:var(--line);margin:0 3px;flex:none}
 /* Sobre a vista */
-.f3-ctx{position:absolute;z-index:7;display:flex;gap:1px;padding:3px;background:var(--panel);border:1px solid #00000059;border-radius:9px;color:var(--ink);box-shadow:var(--shadow);transform:translate(-50%,-100%);pointer-events:auto}
+.f3-ctx{position:absolute;z-index:7;display:flex;gap:1px;padding:3px;background:var(--panel);border:1px solid #00000059;border-radius:9px;color:var(--ink);box-shadow:var(--shadow);transform:translateX(-50%);pointer-events:auto}
 .f3-ctx button{border:0;background:transparent;color:var(--muted);border-radius:6px;height:28px;min-width:28px;padding:0 6px;display:flex;align-items:center;justify-content:center;gap:5px;font-size:12px}
 .f3-ctx button:hover{background:var(--raise);color:var(--ink)}
 .f3-ctx button[aria-pressed=true]{background:var(--accent);color:#1b0f06}
@@ -118,7 +118,7 @@ export const CSS = `
 .f3-dim{position:absolute;z-index:8;pointer-events:none;font:600 11.5px ui-monospace,Consolas,monospace;background:#1d1f23;color:#fff;padding:2px 6px;border-radius:4px;transform:translate(-50%,-50%);white-space:nowrap;box-shadow:0 2px 6px #0003}
 .f3-toast{position:absolute;left:58px;bottom:50px;z-index:9;background:var(--panel-solid);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:7px 11px;font-size:12px;opacity:0;transform:translateY(4px);transition:opacity .18s,transform .18s;pointer-events:none;max-width:420px;box-shadow:var(--shadow)}
 .f3-toast.on{opacity:1;transform:none}
-.f3-warn{position:absolute;left:50%;top:10px;transform:translateX(-50%);z-index:5;max-width:min(520px,40%);background:#3a2a12f2;border:1px solid #7a5a22;color:#ffd79a;border-radius:8px;padding:5px 10px;font-size:11.5px;display:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:var(--shadow)}
+.f3-warn{position:absolute;left:50%;top:54px;transform:translateX(-50%);z-index:5;max-width:min(520px,40%);background:#3a2a12f2;border:1px solid #7a5a22;color:#ffd79a;border-radius:8px;padding:5px 10px;font-size:11.5px;display:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:var(--shadow)}
 .f3-warn.on{display:block}
 .f3-tip{position:fixed;z-index:60;pointer-events:none;background:#0d0e10f2;color:#f3f4f5;border:1px solid #ffffff14;border-radius:6px;padding:4px 8px;font:12px/1.35 Inter,"Segoe UI",system-ui,sans-serif;max-width:280px;box-shadow:0 6px 18px #0006;opacity:0;transition:opacity .12s}
 .f3-tip.on{opacity:1}
@@ -143,6 +143,8 @@ export const CSS = `
 .f3-field>span{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
 .f3-field.w{grid-column:1/-1;grid-template-columns:116px minmax(0,1fr)}
 .f3-field.w>span{max-width:none;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.15;overflow-wrap:anywhere}
+.f3-field.st{grid-template-columns:minmax(0,1fr);gap:3px}
+.f3-field.st>span{-webkit-line-clamp:1}
 .f3-in{position:relative;min-width:0;display:block}
 .f3-in em{position:absolute;right:7px;top:50%;transform:translateY(-50%);font-style:normal;font-size:10.5px;color:var(--faint);pointer-events:none}
 .f3-field input,.f3-field select,.f3-sw select{width:100%;min-width:0;height:24px;border:1px solid transparent;border-radius:5px;padding:0 7px;font:inherit;background:var(--field);color:var(--ink)}

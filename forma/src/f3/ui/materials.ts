@@ -35,7 +35,7 @@ export const MATERIAL_PRESETS: MaterialPreset[] = [
   P('tij-branco', 'Tijolo pintado', 'Paredes', 'brick', '#ece8e0', '#d6d0c5', { vary: 0.15 }),
   P('pedra-calc', 'Pedra calcária', 'Paredes', 'stone', '#cfc4ae', '#bdb3a0'),
   P('pedra-escura', 'Pedra escura', 'Paredes', 'stone', '#7d7a73', '#5d5a54', { h: 0.3, len: 0.5 }),
-  P('concreto', 'Concreto aparente', 'Paredes', 'concrete', '#b9b6ae'),
+  P('concreto', 'Concreto aparente', 'Paredes', 'concrete', '#b9b6ae', undefined, { ties: 1 }),
   P('concreto-liso', 'Concreto liso', 'Paredes', 'concrete', '#c7c4bc', undefined, { ties: 0, w: 2.4, h: 1.2 }),
   P('piso-ceram', 'Piso cerâmico', 'Pisos', 'floor', '#d8d1c4', '#a39b8e'),
   P('porcelanato', 'Porcelanato claro', 'Pisos', 'floor', '#e5e2dc', '#c9c4bb', { w: 0.9, gloss: 0.8 }),

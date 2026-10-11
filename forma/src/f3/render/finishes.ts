@@ -26,7 +26,7 @@ export const FINISHES: Finish[] = [
   { id: 'paving', name: 'Piso intertravado', texture: 'brick', scale: 1.2, roughness: 0.9 },
   { id: 'tile', name: 'Telha cerâmica', texture: 'tile', scale: 1.6, roughness: 0.78 },
   { id: 'slate', name: 'Ardósia', texture: 'tile', scale: 2, roughness: 0.6 },
-  { id: 'metal', name: 'Telha metálica', texture: 'metal', scale: 1.5, roughness: 0.45, metalness: 0.55 },
+  { id: 'metal', name: 'Metal ondulado', texture: 'metal', scale: 1.5, roughness: 0.45, metalness: 0.55 },
   { id: 'panel', name: 'Chapa com junta', texture: 'metal', scale: 2, roughness: 0.4, metalness: 0.3 },
   { id: 'membrane', name: 'Manta', texture: 'concrete', scale: 3, roughness: 0.95 },
   { id: 'glass', name: 'Vidro', scale: 1, roughness: 0.15, metalness: 0.35 },

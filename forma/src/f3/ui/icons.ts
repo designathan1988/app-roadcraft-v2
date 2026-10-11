@@ -35,6 +35,7 @@ const EXTRA: Record<string, string> = {
   layers: 'M12 3l9 5-9 5-9-5z M3 13l9 5 9-5 M3 17l9 5 9-5',
   props: 'M4 6h10 M18 6h2 M4 12h4 M12 12h8 M4 18h12 M20 18h0 M16 4v4 M10 10v4 M18 16v4',
   search: 'M11 4a7 7 0 100 14 7 7 0 000-14 M16 16l5 5',
+  moon: 'M20 14.5A8 8 0 019.5 4a8 8 0 1010.5 10.5z',
   minus: 'M5 12h14',
   draw: 'M4 4h16v16H4z',
   inset: 'M3 3h18v18H3z M8 8h8v8H8z M3 3l5 5 M21 3l-5 5 M3 21l5-5 M21 21l-5-5',
