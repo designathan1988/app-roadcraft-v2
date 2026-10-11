@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "name": "Aberturas manuais",
+  "volumes": [
+    {
+      "id": "v1-0012",
+      "name": "Fachadas",
+      "points": [
+        [
+          -6,
+          -4
+        ],
+        [
+          6,
+          -4
+        ],
+        [
+          6,
+          4
+        ],
+        [
+          -6,
+          4
+        ]
+      ],
+      "holes": [],
+      "x": 0,
+      "z": 0,
+      "rotation": 0,
+      "base": 0,
+      "height": 9.6,
+      "floors": 3,
+      "color": "#b77b56",
+      "roof": "flat",
+      "roofColor": "#474c4e",
+      "roofHeight": 2.3,
+      "facade": "arched",
+      "windowWidth": 1.35,
+      "windowHeight": 1.8,
+      "spacing": 2.5,
+      "trim": "#383e40",
+      "balconies": false,
+      "brise": false,
+      "cornice": true,
+      "garden": false,
+      "pilotis": false,
+      "faces": {
+        "0": {
+          "manual": true,
+          "openings": [
+            {
+              "u": 0.25,
+              "y": 0.015,
+              "w": 1.35,
+              "h": 2.4,
+              "kind": "door",
+              "floor": 0
+            },
+            {
+              "u": 0.6,
+              "y": 3.9,
+              "w": 1.2,
+              "h": 2.05,
+              "kind": "window",
+              "floor": 1
+            },
+            {
+              "u": 0.6,
+              "y": 7.1,
+              "w": 2,
+              "h": 1.6,
+              "kind": "opening",
+              "floor": 2
+            }
+          ]
+        },
+        "1": {
+          "facade": "storefront",
+          "color": "#7b8d81"
+        },
+        "2": {
+          "facade": "blank",
+          "trim": "#aa2222"
+        },
+        "3": {
+          "facade": "curtain",
+          "windowWidth": 2,
+          "spacing": 3
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "name": "Pátio e U",
+  "volumes": [
+    {
+      "id": "v1-0009",
+      "name": "Planta U",
+      "points": [
+        [
+          -9,
+          -6
+        ],
+        [
+          9,
+          -6
+        ],
+        [
+          9,
+          6
+        ],
+        [
+          3.6000000000000005,
+          6
+        ],
+        [
+          3.6000000000000005,
+          -1.4399999999999995
+        ],
+        [
+          -3.6000000000000005,
+          -1.4399999999999995
+        ],
+        [
+          -3.6000000000000005,
+          6
+        ],
+        [
+          -9,
+          6
+        ]
+      ],
+      "holes": [],
+      "x": 0,
+      "z": 0,
+      "rotation": 0,
+      "base": 0,
+      "height": 9.6,
+      "floors": 3,
+      "color": "#b77b56",
+      "roof": "flat",
+      "roofColor": "#474c4e",
+      "roofHeight": 2.3,
+      "facade": "regular",
+      "windowWidth": 1.35,
+      "windowHeight": 1.8,
+      "spacing": 2.5,
+      "trim": "#383e40",
+      "balconies": false,
+      "brise": false,
+      "cornice": true,
+      "garden": true,
+      "pilotis": false,
+      "faces": {}
+    },
+    {
+      "id": "v1-0010",
+      "name": "Pátio",
+      "points": [
+        [
+          -10,
+          -8
+        ],
+        [
+          10,
+          -8
+        ],
+        [
+          10,
+          8
+        ],
+        [
+          -10,
+          8
+        ]
+      ],
+      "holes": [
+        [
+          [
+            6,
+            -4
+          ],
+          [
+            6,
+            4
+          ],
+          [
+            -6,
+            4
+          ],
+          [
+            -6,
+            -4
+          ]
+        ]
+      ],
+      "x": 30,
+      "z": 0,
+      "rotation": 0,
+      "base": 0,
+      "height": 6.4,
+      "floors": 2,
+      "color": "#b77b56",
+      "roof": "flat",
+      "roofColor": "#474c4e",
+      "roofHeight": 2.3,
+      "facade": "regular",
+      "windowWidth": 1.35,
+      "windowHeight": 1.8,
+      "spacing": 2.5,
+      "trim": "#383e40",
+      "balconies": false,
+      "brise": false,
+      "cornice": true,
+      "garden": false,
+      "pilotis": false,
+      "faces": {}
+    }
+  ]
+}

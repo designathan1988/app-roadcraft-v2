@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>FORMA no jogo — exemplo</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #10141a;
+        color: #e7e9e9;
+        font: 13px Segoe UI, Arial, sans-serif;
+      }
+      #game {
+        position: absolute;
+        inset: 48px 0 0 0;
+      }
+      #game canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      .bar {
+        height: 48px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        padding: 0 12px;
+        box-sizing: border-box;
+      }
+      .bar button {
+        background: #2b3135;
+        color: inherit;
+        border: 1px solid #394044;
+        border-radius: 5px;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+      .bar button[aria-pressed='true'] {
+        border-color: #f09b56;
+        color: #f09b56;
+      }
+      #log {
+        margin-left: auto;
+        color: #9ea6ab;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bar">
+      <strong>Meu jogo</strong>
+      <button data-tool="select" aria-pressed="true">Selecionar</button>
+      <button data-tool="draw">Desenhar prédio</button>
+      <button data-tool="extrude">Puxar altura</button>
+      <button id="undo">Desfazer</button>
+      <button id="spawn">Gerar prédio pronto</button>
+      <span id="log">Pronto.</span>
+    </div>
+    <div id="game"></div>
+    <script type="module" src="./host-scene.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,198 @@
+{
+  "version": 1,
+  "name": "Coberturas",
+  "volumes": [
+    {
+      "id": "v1-0013",
+      "name": "Cobertura flat",
+      "points": [
+        [
+          -5,
+          -4
+        ],
+        [
+          5,
+          -4
+        ],
+        [
+          5,
+          4
+        ],
+        [
+          -5,
+          4
+        ]
+      ],
+      "holes": [],
+      "x": 0,
+      "z": 0,
+      "rotation": 0,
+      "base": 0,
+      "height": 6.4,
+      "floors": 2,
+      "color": "#b77b56",
+      "roof": "flat",
+      "roofColor": "#474c4e",
+      "roofHeight": 2.5,
+      "facade": "regular",
+      "windowWidth": 1.35,
+      "windowHeight": 1.8,
+      "spacing": 2.5,
+      "trim": "#383e40",
+      "balconies": false,
+      "brise": false,
+      "cornice": true,
+      "garden": false,
+      "pilotis": false,
+      "faces": {}
+    },
+    {
+      "id": "v1-0014",
+      "name": "Cobertura shed",
+      "points": [
+        [
+          -5,
+          -4
+        ],
+        [
+          5,
+          -4
+        ],
+        [
+          5,
+          -0.6400000000000001
+        ],
+        [
+          -0.7999999999999998,
+          -0.6400000000000001
+        ],
+        [
+          -0.7999999999999998,
+          4
+        ],
+        [
+          -5,
+          4
+        ]
+      ],
+      "holes": [],
+      "x": 14,
+      "z": 0,
+      "rotation": 0,
+      "base": 0,
+      "height": 6.4,
+      "floors": 2,
+      "color": "#b77b56",
+      "roof": "shed",
+      "roofColor": "#474c4e",
+      "roofHeight": 2.5,
+      "facade": "regular",
+      "windowWidth": 1.35,
+      "windowHeight": 1.8,
+      "spacing": 2.5,
+      "trim": "#383e40",
+      "balconies": false,
+      "brise": false,
+      "cornice": true,
+      "garden": false,
+      "pilotis": false,
+      "faces": {}
+    },
+    {
+      "id": "v1-0015",
+      "name": "Cobertura gable",
+      "points": [
+        [
+          -5,
+          -4
+        ],
+        [
+          5,
+          -4
+        ],
+        [
+          5,
+          4
+        ],
+        [
+          -5,
+          4
+        ]
+      ],
+      "holes": [],
+      "x": 28,
+      "z": 0,
+      "rotation": 0,
+      "base": 0,
+      "height": 6.4,
+      "floors": 2,
+      "color": "#b77b56",
+      "roof": "gable",
+      "roofColor": "#474c4e",
+      "roofHeight": 2.5,
+      "facade": "regular",
+      "windowWidth": 1.35,
+      "windowHeight": 1.8,
+      "spacing": 2.5,
+      "trim": "#383e40",
+      "balconies": false,
+      "brise": false,
+      "cornice": true,
+      "garden": false,
+      "pilotis": false,
+      "faces": {}
+    },
+    {
+      "id": "v1-0016",
+      "name": "Cobertura dome",
+      "points": [
+        [
+          -5,
+          -4
+        ],
+        [
+          5,
+          -4
+        ],
+        [
+          5,
+          -0.6400000000000001
+        ],
+        [
+          -0.7999999999999998,
+          -0.6400000000000001
+        ],
+        [
+          -0.7999999999999998,
+          4
+        ],
+        [
+          -5,
+          4
+        ]
+      ],
+      "holes": [],
+      "x": 42,
+      "z": 0,
+      "rotation": 0,
+      "base": 0,
+      "height": 6.4,
+      "floors": 2,
+      "color": "#b77b56",
+      "roof": "dome",
+      "roofColor": "#474c4e",
+      "roofHeight": 2.5,
+      "facade": "regular",
+      "windowWidth": 1.35,
+      "windowHeight": 1.8,
+      "spacing": 2.5,
+      "trim": "#383e40",
+      "balconies": false,
+      "brise": false,
+      "cornice": true,
+      "garden": false,
+      "pilotis": false,
+      "faces": {}
+    }
+  ]
+}
