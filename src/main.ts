@@ -657,8 +657,12 @@ const flight = scene.flight;
 const flightHud = document.createElement('div');
 flightHud.className = 'flight-hud';
 flightHud.hidden = true;
-flightHud.style.cssText = 'position:fixed;left:16px;bottom:96px;z-index:30;pointer-events:none;color:#e8f4ff;font:500 13px/1.45 system-ui,sans-serif;'
-  + 'background:rgba(6,14,24,.55);border:1px solid rgba(140,200,255,.25);border-radius:10px;padding:10px 12px;max-width:min(560px,calc(100vw - 32px));text-shadow:0 1px 2px #000';
+// Out of the way (the player: "tira essa merda da frente"): one small line
+// in the corner, the keys' hint only for the first seconds of a flight.
+flightHud.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:30;pointer-events:none;color:rgba(232,244,255,.85);font:500 12px/1.4 system-ui,sans-serif;'
+  + 'max-width:min(520px,calc(100vw - 24px));text-shadow:0 1px 2px #000,0 0 6px rgba(0,0,0,.6)';
+const FLIGHT_HINT_MS = 5000;
+let flightStartedAt = 0;
 document.body.append(flightHud);
 let flightShownAt = 0;
 const metresText = (units: number): string => {
@@ -671,10 +675,11 @@ function updateFlightHud(now: number): void {
   flightShownAt = now;
   const st = flight.state;
   const speed = metresText(st.speed);
-  flightHud.innerHTML = `<div style="font-size:15px;font-weight:700">${t('flight.speed')}: ${speed}/s${st.boost ? ' ⚡' : ''}</div>`
-    + `<div>${t('flight.height', { body: t(`flight.body.${st.near}`) })}: ${metresText(st.height)}</div>`
-    + `<div>${t('flight.throttle')}: ${formatDecimal(st.throttle, st.throttle < 1 ? 2 : 1)}×</div>`
-    + `<div style="opacity:.8;margin-top:4px">${document.pointerLockElement === canvas ? t('flight.hint') : t('flight.clickToSteer') + ' · ' + t('flight.hint')}</div>`;
+  const hint = now - flightStartedAt < FLIGHT_HINT_MS
+    ? `<div style="opacity:.75">${document.pointerLockElement === canvas ? t('flight.hint') : t('flight.clickToSteer') + ' · ' + t('flight.hint')}</div>`
+    : '';
+  flightHud.innerHTML = hint + `<div>${speed}/s${st.boost ? ' ⚡' : ''} · ${t('flight.height', { body: t(`flight.body.${st.near}`) })}: ${metresText(st.height)}`
+    + `${st.throttle !== 1 ? ` · ${t('flight.throttle')} ${formatDecimal(st.throttle, st.throttle < 1 ? 2 : 1)}×` : ''}</div>`;
 }
 function takeOff(): void {
   if (!flight || flight.active) return;
@@ -682,6 +687,7 @@ function takeOff(): void {
   flight.enter();
   flightHud.hidden = false;
   flightShownAt = 0;
+  flightStartedAt = performance.now();
   requestDraw();
 }
 function land(): void {
