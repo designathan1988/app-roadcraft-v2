@@ -1,7 +1,7 @@
 // Ferramentas rápidas de edifício: pavimentos, recuo no topo, embasamento,
 // pátio e fachadas prontas. Operam no documento (sem three).
 import type { Building3, FacadeRule, Solid } from './schema';
-import { facadeRule, levelsFor, planVertices, roofSpec, solid, uid } from './defaults';
+import { facadeRule, planVertices, roofSpec, solid, uid } from './defaults';
 import { offsetRing, oriented, ringValid, sampleRing } from './plan';
 import { levelsUpTo } from './modeling';
 import { inside, planCenter } from './ops';
