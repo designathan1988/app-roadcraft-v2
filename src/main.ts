@@ -3,7 +3,8 @@ import { planetLocalMinutes } from '@world/planet/sun';
 import { hasTransit } from '@world/transit';
 import { mountCompass, northOnScreen, northTurn, type Compass } from '@ui/v2/compass';
 import { gestureChart, ownPoint } from './editor/planetFrame';
-import { chartAt, onChartOf, toOwner } from '@world/planet/charts';
+import { atlasToSphereInto, chartAt, onChartOf, toOwner } from '@world/planet/charts';
+import { SEA_LEVEL, earthHeight } from '@world/planet/relief';
 import { flipProfile, streetChain } from '@world/roads/streetChain';
 import { furnitureChosen } from '@ui/roads/furnitureChoice';
 import { isMarkingStyle } from '@world/roads/markingStyle';
@@ -245,12 +246,19 @@ if (saved) {
   try {
     doc.changes.causeNext('mapa salvo carregado');
     restoreInto(doc, saved, net);
-    // A planet map saved with nothing on its ground (no road, building or
-    // terrain edit) opens as the Earth: nothing stands there to be moved, and
+    // A planet map saved with no road and no terrain edit opens as the Earth:
     // a map saved before the Earth existed stayed a green ball with no sea
-    // (the player, 2026-10-10: "cadê a Terra").
+    // (the player, 2026-10-10: "cadê a Terra"). Its buildings stand on the
+    // ground wherever it is (their floors are read from it), so they come
+    // too - as long as each stands on land there, never under the sea.
+    const onEarthLand = (x: number, y: number): boolean => {
+      const at = { x: 0, y: 0, z: 0 };
+      atlasToSphereInto(x, y, at);
+      return earthHeight(at.x, at.y, at.z) > SEA_LEVEL + 1;
+    };
     if (__PLANET__ && doc.terrainRelief !== RELIEF_EARTH && doc.nodes.size === 0 && doc.segments.size === 0
-      && doc.buildings.size === 0 && doc.terrainStamps.length === 0 && doc.terrainPaint.length === 0) {
+      && doc.terrainStamps.length === 0 && doc.terrainPaint.length === 0
+      && [...doc.buildings.all()].every((b) => onEarthLand(b.x, b.y))) {
       doc.terrainRelief = RELIEF_EARTH;
     }
     doc.changes.causeNext('jogo');
