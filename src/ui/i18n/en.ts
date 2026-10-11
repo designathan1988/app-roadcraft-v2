@@ -2468,6 +2468,7 @@ export const EN: Dictionary = {
   'flight.throttle': 'Throttle',
   'flight.body.planet': 'the planet',
   'flight.body.moon': 'the moon',
+  'flight.body.asteroid': 'an asteroid',
   'flight.body.sun': 'the sun',
   'flight.clickToSteer': 'Click the scene to fly with the mouse · V lands',
   'play.button': 'Play',

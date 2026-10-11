@@ -1,3 +1,4 @@
+import { createAsteroids, type Asteroids } from './asteroids';
 import { PLANET_RADIUS } from '@core/cubeSphere';
 import { Rng } from '@core/rng';
 import {
@@ -478,6 +479,8 @@ export interface Space {
   readonly air: Air;
   /** The bodies the free camera can fly to and is pulled by (`flight.ts`): their centres (three's space) and radii, as last updated. */
   bodies(): readonly { readonly name: 'moon' | 'sun'; readonly centre: Vector3; readonly radius: number }[];
+  /** The asteroid field (`asteroids.ts`): its rocks nearest a point, for the flight. */
+  readonly asteroids: Asteroids;
   dispose(): void;
 }
 
@@ -566,6 +569,10 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
   moon.scale.setScalar(MOON_RADIUS);
   moon.userData = skip;
 
+  // The asteroid field, far out (`asteroids.ts`).
+  const asteroids = createAsteroids();
+  let rocksAt = performance.now();
+
   const airMaterial = new ShaderMaterial({
     // The air's own uniform objects: what it sets each frame, this reads.
     uniforms: airModel.uniforms,
@@ -588,6 +595,7 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
   air.userData = skip;
 
   for (const object of [galaxy, stars, sun, moon, air]) scene.add(object);
+  scene.add(asteroids.group);
 
   const axis = new Vector3();
   const spin = new Matrix4();
@@ -607,6 +615,7 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
     get spaceShare() {
       return spaceShare;
     },
+    asteroids,
     bodies() {
       return [
         { name: 'moon' as const, centre: moon.position, radius: MOON_RADIUS },
@@ -662,6 +671,9 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
       // By day too, pale against the blue (the shell adds the sky over it).
       moonMaterial.uniforms['uShow']!.value = 1;
       moon.visible = true;
+      const nowRocks = performance.now();
+      asteroids.update(camera, motion, Math.min(0.1, (nowRocks - rocksAt) / 1000));
+      rocksAt = nowRocks;
       // The air round the planet, from the ground to space: the sky round the
       // eye inside it, over everything from above it (\`air.ts\`). The moon
       // lights it a little at night, by its phase (the lit share of its disc).
@@ -673,6 +685,7 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
       for (const object of [galaxy, stars, sun, moon, air]) if (hidden.has(object.name)) object.visible = false;
     },
     dispose() {
+      asteroids.dispose();
       for (const object of [galaxy, stars, sun, moon, air]) {
         scene.remove(object);
         object.geometry.dispose();

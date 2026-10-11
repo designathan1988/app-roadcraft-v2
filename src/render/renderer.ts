@@ -572,6 +572,7 @@ export function createSceneRenderer(
   const flight = __PLANET__ && space ? new Flight({
     get camera() { return rig.camera as PerspectiveCamera; },
     bodies: () => space.bodies(),
+    rocks: (at) => space.asteroids.nearest(at, 6),
     // The ground, or a building's roof over it (the camera's own solids, `setSolids`).
     groundAt: (x, y) => Math.max(terrain.renderedHeightAt(x, y), solidsFloorAt ? solidsFloorAt(x, y) : -Infinity),
     setPose: (pose) => rig.setFlight(pose),

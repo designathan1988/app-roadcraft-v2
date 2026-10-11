@@ -48,7 +48,7 @@ import { planetCentre, planetPick } from './bend';
  */
 
 export interface FlightBody {
-  readonly name: 'planet' | 'moon' | 'sun';
+  readonly name: 'planet' | 'moon' | 'sun' | 'asteroid';
   readonly centre: Vector3;
   readonly radius: number;
 }
@@ -57,6 +57,8 @@ export interface FlightHost {
   readonly camera: PerspectiveCamera;
   /** The moon and the sun (`space.ts` bodies). */
   bodies(): readonly { readonly name: 'moon' | 'sun'; readonly centre: Vector3; readonly radius: number }[];
+  /** The asteroids nearest a point: solid, they slow the flight near them, but set no up. */
+  rocks(at: Vector3): readonly { readonly centre: Vector3; readonly radius: number }[];
   /** The lowest the eye may go at an atlas point: the ground, or a building's roof. */
   groundAt(x: number, y: number): number;
   setPose(pose: FlightPose | null): void;
@@ -67,7 +69,7 @@ export interface FlightReadout {
   /** Speed, world units / s. */
   readonly speed: number;
   /** The nearest body and the height over its surface, world units. */
-  readonly near: 'planet' | 'moon' | 'sun';
+  readonly near: 'planet' | 'moon' | 'sun' | 'asteroid';
   readonly height: number;
   readonly throttle: number;
   readonly boost: boolean;
@@ -258,10 +260,16 @@ export class Flight {
     planetCentre(this.planet.centre);
     const bodies: FlightBody[] = [this.planet];
     for (const b of this.host.bodies()) bodies.push(b);
+    // The worlds that set an up are the planet, the moon and the sun; a rock
+    // passed by would swing the horizon round it.
+    const worlds = bodies.length;
+    for (const r of this.host.rocks(this.position)) bodies.push({ name: 'asteroid', centre: r.centre, radius: r.radius });
     let sunDistance = PLANET_RADIUS * 60;
     for (const b of bodies) if (b.name === 'sun') sunDistance = b.centre.distanceTo(this.planet.centre);
     let near: FlightBody = this.planet;
     let height = Infinity;
+    let world: FlightBody = this.planet;
+    let worldHeight = Infinity;
     // The planet's own ground under the eye (its relief, its roads' cuts).
     let planetFloor = PLANET_RADIUS;
     ray.set(this.position, v1.subVectors(this.planet.centre, this.position).normalize());
@@ -271,6 +279,7 @@ export class Flight {
       const floor = b === this.planet ? planetFloor : b.radius;
       const h = this.position.distanceTo(b.centre) - floor;
       if (h < height) { height = h; near = b; }
+      if (bodies.indexOf(b) < worlds && h < worldHeight) { worldHeight = h; world = b; }
     }
 
     // Up: the nearest body's centre to the eye. The look and the heading
@@ -279,8 +288,8 @@ export class Flight {
     // Far out the up fades: towards the view's own up, so the view is free
     // there and the change is gradual on the way.
     v2.copy(this.up);
-    const radial = v1.subVectors(this.position, near.centre).normalize();
-    const overNear = (this.position.distanceTo(near.centre) - near.radius) / near.radius;
+    const radial = v1.subVectors(this.position, world.centre).normalize();
+    const overNear = (this.position.distanceTo(world.centre) - world.radius) / world.radius;
     const bound = 1 - Math.min(1, Math.max(0, (overNear - FREE_FROM) / (FREE_AT - FREE_FROM)));
     const own = cameraUp.set(0, 1, 0).applyQuaternion(this.orientation);
     this.up.copy(own).lerp(radial, bound * bound * (3 - 2 * bound)).normalize();

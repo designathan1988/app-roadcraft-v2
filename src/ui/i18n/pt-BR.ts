@@ -2454,6 +2454,7 @@ export const PT_BR: Dictionary = {
   'flight.throttle': 'Potência',
   'flight.body.planet': 'o planeta',
   'flight.body.moon': 'a Lua',
+  'flight.body.asteroid': 'um asteroide',
   'flight.body.sun': 'o Sol',
   'flight.clickToSteer': 'Clique na cena para voar com o mouse · V pousa',
   'play.button': 'Jogar',
