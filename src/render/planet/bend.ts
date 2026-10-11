@@ -106,14 +106,20 @@ vec3 planetDirection(vec3 p, out vec3 e, out vec3 n) {
 }
 // The point looked at (planetT's up row, the planet's frame) and the ground's
 // way out from it towards s, with the angle along the ground (rad).
+// The angle from the DIFFERENCE of the two unit vectors, 2 atan2(|s-a|, |s+a|)
+// (J. Walker, "Computing the Angle Between Vectors"; Kahan): acos of their
+// dot product lost it near the anchor - in float32 the cosine of an arc under
+// about 1.5 m rounds to 1 - and every vertex that close to the point looked
+// at fell onto the anchor's own up line: wires and fittings in the middle of
+// the screen drawn as shards, and the shadow pass with them.
 void planetFromAnchor(vec3 s, out vec3 a, out vec3 t, out float theta) {
   mat3 r = mat3(planetT);
   a = vec3(r[0][1], r[1][1], r[2][1]);
-  float c = clamp(dot(s, a), -1.0, 1.0);
-  vec3 tv = s - c * a;
+  vec3 d = s - a;
+  vec3 tv = d - dot(d, a) * a;
   float tl = length(tv);
-  t = tl > 1e-7 ? tv / tl : vec3(r[0][0], r[1][0], r[2][0]);
-  theta = acos(c);
+  t = tl > 1e-9 ? tv / tl : vec3(r[0][0], r[1][0], r[2][0]);
+  theta = 2.0 * atan(length(d), length(s + a));
 }
 // A point of the sphere (unit s, height h) as the planet is drawn at its
 // curvature (planetK): on the sphere of radius R / k tangent at the point
@@ -441,15 +447,27 @@ let curvature = 1;
 const kA = new Vector3();
 const kT = new Vector3();
 const kS = new Vector3();
+const kD = new Vector3();
+/**
+ * The angle between the unit vector in `kS` and the anchor's up `kA`, and
+ * the way out from the anchor towards it into `kT` (unit): from their
+ * difference, 2 atan2(|s - a|, |s + a|), exact near the anchor where acos of
+ * the dot product is not (`planetFromAnchor` in the GLSL says why).
+ */
+function fromAnchor(): number {
+  kD.subVectors(kS, kA);
+  kT.copy(kD).addScaledVector(kA, -kD.dot(kA));
+  const tl = kT.length();
+  if (tl > 1e-12) kT.divideScalar(tl); else kT.copy(east);
+  const along = kD.length();
+  kD.addVectors(kS, kA);
+  return 2 * Math.atan2(along, kD.length());
+}
 /** `planetBent` (GLSL) on the CPU: a unit sphere direction and a height, the planet's frame. */
 function bentInto(s: Readonly<Vec3>, h: number, out: Vector3): Vector3 {
   if (curvature > 0.9999) return out.set(s.x * (PLANET_RADIUS + h), s.y * (PLANET_RADIUS + h), s.z * (PLANET_RADIUS + h));
   kS.set(s.x, s.y, s.z);
-  const c = Math.max(-1, Math.min(1, kS.dot(kA)));
-  kT.copy(kS).addScaledVector(kA, -c);
-  const tl = kT.length();
-  if (tl > 1e-7) kT.divideScalar(tl); else kT.copy(east);
-  const theta = Math.acos(c);
+  const theta = fromAnchor();
   const rk = PLANET_RADIUS / curvature, phi = theta * curvature, half = Math.sin(phi * 0.5);
   return out.copy(kA).multiplyScalar(PLANET_RADIUS + h * Math.cos(phi) - 2 * rk * half * half).addScaledVector(kT, (rk + h) * Math.sin(phi));
 }
@@ -465,12 +483,8 @@ function unbend(p: Vector3): void {
   if (curvature > 0.9999) { const l = p.length() || 1; dir.x = p.x / l; dir.y = p.y / l; dir.z = p.z / l; return; }
   const rk = bentSphere();
   kS.subVectors(p, bentCentre).normalize();
-  const c = Math.max(-1, Math.min(1, kS.dot(kA)));
-  kT.copy(kS).addScaledVector(kA, -c);
-  const tl = kT.length();
-  if (tl > 1e-7) kT.divideScalar(tl); else kT.copy(east);
   // The angle on the bent sphere, back to the planet's: theta = phi / k.
-  const theta = Math.min(Math.PI, Math.acos(c) * rk / PLANET_RADIUS);
+  const theta = Math.min(Math.PI, fromAnchor() * rk / PLANET_RADIUS);
   dir.x = kA.x * Math.cos(theta) + kT.x * Math.sin(theta);
   dir.y = kA.y * Math.cos(theta) + kT.y * Math.sin(theta);
   dir.z = kA.z * Math.cos(theta) + kT.z * Math.sin(theta);
