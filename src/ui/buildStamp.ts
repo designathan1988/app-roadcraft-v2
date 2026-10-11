@@ -1,11 +1,9 @@
-import { onLanguageChange, t } from './i18n';
+import { t } from './i18n';
 
 /**
  * The build stamp: branch, short commit and date of what is running
- * (`build-stamp.ts` at the project root). In development it sits in the
- * corner of the status bar and is re-read from the server when the player
- * comes back to the game, so a fast-forward shows up without a reload; in production
- * it is only in the About dialog.
+ * (`build-stamp.ts` at the project root), shown in the About dialog; in
+ * development re-read from the server each time the dialog opens.
  */
 export interface BuildStamp {
   readonly branch: string;
@@ -38,7 +36,9 @@ export function onBuildStamp(listener: (value: BuildStamp) => void): () => void 
   return () => listeners.delete(listener);
 }
 
-async function refresh(): Promise<void> {
+/** Re-reads the stamp from the development server (the About dialog opened): a fast-forward shows without a reload. */
+export async function refreshBuildStamp(): Promise<void> {
+  if (!import.meta.env.DEV) return;
   try {
     const response = await fetch('/__build', { cache: 'no-store' });
     if (!response.ok) return;
@@ -49,26 +49,4 @@ async function refresh(): Promise<void> {
   } catch {
     // The server went away; keep the last stamp.
   }
-}
-
-/** Shows the stamp in `element` (development builds) and keeps it current. */
-export function mountBuildStamp(element: HTMLElement | null): void {
-  if (!element) return;
-  if (!import.meta.env.DEV) {
-    element.hidden = true;
-    return;
-  }
-  const paint = (): void => {
-    element.textContent = formatBuildStamp();
-    element.title = t('build.label');
-  };
-  paint();
-  onBuildStamp(paint);
-  onLanguageChange(paint);
-  void refresh();
-  // Re-read when the player comes back to the game (the tab shown again, the
-  // window focused) rather than every five seconds whatever they do: a
-  // fast-forward happens while they are elsewhere.
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); });
-  window.addEventListener('focus', () => void refresh());
 }

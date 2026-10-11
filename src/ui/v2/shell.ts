@@ -11,9 +11,14 @@
  *   name per verb);
  * - the selection on the right.
  *
- * The game's commands are unchanged: this module drives them - the Builder
- * through its actions, the map tools through the game's own (now invisible)
- * controls - so nothing the player does here can disagree with the rules.
+ * It reads the game's state and calls the game's commands, nothing else: the
+ * tool in hand, the speed, the history and every tool's setting come from
+ * the game's state (`core/gameState.ts`, `watch`ed: told once a frame what
+ * changed - Nystrom, "Observer"); the city's numbers and the game's answers
+ * are handed to it as they are computed (`onStatus`, `onHint`); and each
+ * control calls the command `main.ts` hands it (`ShellDeps`), the Builder
+ * through its actions. It once read and clicked a second, hidden interface
+ * four times a second (docs/PLANO.md 5g).
  */
 import { furnitureChosen, setFurnitureChosen } from '../roads/furnitureChoice';
 import { FURNITURE_SETS } from '@world/roads/furnitureSets';
@@ -34,7 +39,7 @@ import {
   type BuilderToolSpec,
 } from '../builder/catalog';
 import type { TransitLine } from '@world/transit';
-import { blockGridChoice, onRoadGridChange, roadGridShown, roadWidth, setRoadGridShown, setRoadWidth, setZoneColoursShown, signChoice, strikeChoice, zoneColoursShown } from '../toolChoices';
+import { blockGridChoice, roadGridShown, roadWidth, setRoadGridShown, setRoadWidth, setZoneColoursShown, signChoice, strikeChoice, zoneColoursShown } from '../toolChoices';
 import { SIGN_HAS_TEXT, SIGN_TEXT_MAX, SIGN_TYPES } from '@world/landscape';
 import { CLOUD_MODES, POLE_TOOL_MODES, cloudMode, setCloudMode, gullyErase, setGullyErase, TREE_MODES, treeMode, setTreeMode, treeKind, setTreeKind, elementKind, elementMode, setElementKind, setElementMode, fogErase, paintKind, poleLampMode, poleToolMode, setFogErase, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
@@ -52,7 +57,8 @@ import { BARRIER_KINDS } from '@world/barriers';
 import { POLE_LAMP_MODES } from '@world/utilities';
 import { builderIconSvg } from '../builder/icons';
 import { SNAP_MODES, type BuilderState, type BuilderWorkspace } from '../builder/workspace';
-import { t, plural, onLanguageChange } from '../i18n';
+import { t, plural, onLanguageChange, LANGUAGES, language, setLanguage, formatDecimal } from '../i18n';
+import { UNITS_PER_METER } from '@world/units';
 import { balanceTip, formatMoney } from '../roads/money';
 import { drawProfile } from '../roads/drawProfile';
 import { catalogStrip } from '../roads/catalogPanel';
@@ -81,6 +87,7 @@ const ICON: Record<string, string> = {
   transit: '<rect x="5" y="3" width="14" height="15" rx="3"/><path d="M5 11h14M8 18v2M16 18v2"/><circle cx="8.5" cy="14.5" r="1"/><circle cx="15.5" cy="14.5" r="1"/>',
   tr_stop: '<path d="M7 21V4"/><rect x="7" y="4" width="10" height="7" rx="1"/><path d="M10 7.5h4"/><path d="M4 21h8"/>',
   tr_terminal: '<rect x="3" y="9" width="18" height="10" rx="1"/><path d="M3 9l9-5 9 5M8 19v-5h8v5"/>',
+  tr_bay: '<path d="M2 8h5l3 4h4l3-4h5M2 18h20"/><rect x="9" y="13" width="6" height="3" rx="1"/>',
   tr_track: '<path d="M8 3 6 21M16 3l2 18M6.5 7h11M6 12h12M5.5 17h13"/>',
   tr_metro: '<path d="M4 20h16"/><rect x="6" y="5" width="12" height="11" rx="4"/><path d="M6 11h12M9 16l-2 3m8-3 2 3"/><circle cx="12" cy="8" r="1"/>',
   tr_station: '<path d="M3 20h18M5 20V9h14v11M3 9l9-5 9 5"/><path d="M9 13h6"/>',
@@ -266,8 +273,6 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
   if (text !== undefined) node.textContent = text;
   return node;
 };
-const q = <T extends HTMLElement = HTMLElement>(selector: string): T | null => document.querySelector<T>(selector);
-const press = (selector: string): void => q<HTMLButtonElement>(selector)?.click();
 const button = (className: string, label: string, run: () => void, icon?: string): HTMLButtonElement => {
   const b = el('button', className);
   b.type = 'button';
@@ -277,19 +282,12 @@ const button = (className: string, label: string, run: () => void, icon?: string
   b.onclick = run;
   return b;
 };
-/** Sets one of the game's own inputs as the player would. */
-const setInput = (selector: string, value: string): void => {
-  const input = q<HTMLInputElement | HTMLSelectElement>(selector);
-  if (!input) return;
-  input.value = value;
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  input.dispatchEvent(new Event('change', { bubbles: true }));
-};
 
 /** What the public transport tool is set to and does, as the panel shows it (`editor/transitTools.ts`). */
-type TransitToolKind = 'stop' | 'terminal' | 'track' | 'station' | 'line';
+type TransitToolKind = 'stop' | 'terminal' | 'bay' | 'track' | 'station' | 'line';
 interface ShellTransitTool {
-  readonly kind: TransitToolKind;
+  /** The kind in hand: one of the tabs below, or another the editor has (a mode without a tab of its own). */
+  readonly kind: string;
   readonly rail: 'train' | 'metro';
   setKind(kind: TransitToolKind, rail?: 'train' | 'metro'): void;
   lines(): readonly TransitLine[];
@@ -303,25 +301,159 @@ interface ShellTransitTool {
  * the editor's, which the interface layer may not import (CLAUDE.md, Layers):
  * `main.ts`, which wires the layers together, hands them over here.
  */
+/**
+ * The game's state as the shell reads it (`main.ts` `gameState`): the values
+ * now, and `watch` to be told, once a frame, that some of them changed.
+ */
+export interface ShellGameValues {
+  readonly tool: string;
+  readonly paused: boolean;
+  readonly speed: number;
+  readonly quality: string;
+  readonly roadTypeIndex: number;
+  readonly alignment: string;
+  readonly roadHeightOffset: number;
+  readonly roadLanePreset: number | null;
+  readonly roundaboutRadius: number;
+  readonly terrainMode: string;
+  readonly terrainRadius: number;
+  readonly terrainStrength: number;
+  readonly terrainHardness: number;
+  readonly barrierKind: string;
+  readonly zoneUse: string;
+  readonly zoneDensity: string;
+  readonly zoneEraser: boolean;
+  readonly zoneMode: string;
+  readonly lotSplitKind: string;
+  readonly lotSplitParts: number;
+  readonly congestionOverlay: boolean;
+  readonly perspective: boolean;
+  readonly canUndo: boolean;
+  readonly canRedo: boolean;
+  readonly sky: string;
+  readonly inspectorOpen: boolean;
+}
+export interface ShellGame {
+  readonly values: Readonly<ShellGameValues>;
+  watch(keys: readonly (keyof ShellGameValues)[], fn: () => void): () => void;
+}
+/** A number the player sets with a slider: its range, and how the game reads and takes it. */
+export interface ShellSlider {
+  readonly min: number;
+  readonly max: number;
+  readonly step: number;
+  get(): number;
+  set(value: number): void;
+  /** The drag ended (one undo step a drag, for the map's own numbers). */
+  end?(): void;
+}
+/** The city's numbers, as `main.ts` computes them for the top bar and the simulation menu. */
+export interface ShellStatus {
+  readonly clock: string;
+  readonly vehicles: string;
+  readonly people: string;
+  readonly trips: string;
+  readonly lost: string;
+  readonly meanSpeed: string;
+  readonly queued: string;
+  /** Junctions that cannot be built (`Network.impossible`). */
+  readonly impossible: number;
+  /** The money in hand (`world/economy.ts`). */
+  readonly balance: number;
+}
+/** What a lot or zone setting is changed to (`main.ts` `setZone`). */
+export interface ShellZonePatch {
+  readonly mode?: string;
+  readonly use?: string;
+  readonly density?: string;
+  readonly eraser?: boolean;
+  readonly splitKind?: string;
+  readonly splitParts?: number;
+}
+/** A road class, as the upgrade tool shows it. */
+export interface ShellRoadClass {
+  readonly index: number;
+  readonly name: string;
+  readonly title: string;
+  readonly picture: string;
+  /** Its total width in whole metres, which the width stepper starts from. */
+  readonly widthM: number;
+}
+
 export interface ShellDeps {
   readonly workspace: BuilderWorkspace;
+  readonly game: ShellGame;
+  /** The road inspector's panel (`ui/inspector.ts`), shown in the selection column. */
+  readonly inspectorPanel: HTMLElement | null;
+  /** Picks a tool, or puts it down when it is already in hand (`main.ts` `pickTool`). */
+  pickTool(tool: string): void;
+  /** Takes a tool in hand (`main.ts` `setTool`). */
+  setTool(tool: string): void;
+  /** Puts everything down: no tool, nothing picked. */
+  putDown(): void;
+  setSpeed(speed: number): void;
+  undo(): void;
+  redo(): void;
+  newMap(): void;
+  openMap(): void;
+  saveMap(): void;
+  about(): void;
+  readonly qualityLevels: readonly string[];
+  setQuality(level: string): void;
+  markingStyle(): string;
+  setMarkingStyle(style: string): void;
+  setSky(mode: string): void;
+  toggleCongestion(): void;
+  /** A camera command: turnLeft, turnRight, tiltUp, tiltDown, north, perspective, reset. */
+  camera(command: string): void;
+  /** Whether the camera turns at all (the flat view does not). */
+  readonly cameraTurns: boolean;
+  // The road tool.
+  readonly roundabout: boolean;
+  roadClasses(): readonly ShellRoadClass[];
+  selectRoadType(index: number): void;
+  setAlignment(alignment: string): void;
+  stepRoadHeight(direction: number): void;
+  laneChoices(): readonly { readonly id: string; readonly label: string; readonly on: boolean }[];
+  setLanes(id: string): void;
+  // Zoning, the land, the walls.
+  setZone(patch: ShellZonePatch): void;
+  setTerrainMode(mode: string): void;
+  setBarrierKind(kind: string): void;
+  mapBiome(): string;
+  setMapBiome(key: string): void;
+  /** An action on the whole map, asking first: clearTerrain, clearGullies, clearFog, clearTrees, clearElements, scatterClouds, clearClouds. */
+  mapAction(name: string): void;
+  // The simulation.
+  demand(): number;
+  setDemand(value: number): void;
+  /** Every slider the panels show, by name (`main.ts` `SLIDERS`). */
+  readonly sliders: Readonly<Record<string, ShellSlider>>;
+  /** Told the city's numbers whenever the game computes them (a few times a second while it runs). */
+  onStatus(listen: (status: ShellStatus) => void): void;
+  /** Told the tool's hint, and each answer of the game (saved, refused, undone...) as a flash. */
+  onHint(listen: (text: string, flash: boolean) => void): void;
   roadSnap(): { readonly on: boolean; readonly angles: boolean; readonly grid: boolean };
   setRoadSnap(patch: Partial<{ on: boolean; angles: boolean; grid: boolean }>): void;
   readonly parkingPresets: readonly string[];
   roadParkingPreset(): string;
   setRoadParkingPreset(preset: string): void;
   transitTool(): ShellTransitTool | null;
-  /** How many junctions cannot be built (`Network.impossible`), and taking the camera and the inspector to the first. */
-  impossibleCount(): number;
+  /** Takes the camera and the inspector to the first junction that cannot be built. */
   showImpossible(): void;
-  /** The money in hand (`world/economy.ts`), shown in the top bar. */
-  balance?(): number;
 }
 
-export function mountShell(deps: ShellDeps): void {
+/** What the game asks of the shell. */
+export interface ShellHandle {
+  /** Opens a tool's panel with that tool in hand (the road inspector's eyedropper). */
+  openTool(tool: string): void;
+}
+
+export function mountShell(deps: ShellDeps): ShellHandle {
   const { workspace, roadSnap, setRoadSnap, roadParkingPreset, setRoadParkingPreset, transitTool } = deps;
   const ROAD_PARKING_PRESETS = deps.parkingPresets;
   const actions = workspace.actions;
+  const game = deps.game.values;
   document.documentElement.classList.add('v2-shell');
   const root = el('div', 'v2');
   document.getElementById('app')?.appendChild(root);
@@ -336,19 +468,14 @@ export function mountShell(deps: ShellDeps): void {
   const sky = el('div', 'v2-seg v2-sky');
   sky.setAttribute('role', 'group');
   const skyButtons = SKY_MODES_HUD.map(([mode, icon]) => {
-    const b = button('v2-seg-b', t(`sky.${mode}`), () => {
-      // The game's own button steps day → night → cycle: stepped until it shows this one.
-      for (let i = 0; i < 3 && q('#skyMode')?.textContent !== t(`sky.${mode}`); i++) press('#skyMode');
-      syncSky();
-    }, svg(icon, 16));
+    const b = button('v2-seg-b', t(`sky.${mode}`), () => deps.setSky(mode), svg(icon, 16));
     b.dataset['sky'] = mode;
     sky.appendChild(b);
     return b;
   });
   const syncSky = (): void => {
-    const now = q('#skyMode')?.textContent ?? '';
     for (const b of skyButtons) {
-      const on = now === t(`sky.${b.dataset['sky'] ?? ''}`);
+      const on = game.sky === b.dataset['sky'];
       if (b.classList.contains('on') !== on) { b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
     }
   };
@@ -369,8 +496,7 @@ export function mountShell(deps: ShellDeps): void {
   impossibleB.appendChild(impossibleN);
   impossibleB.hidden = true;
   let impossibleShown = -1;
-  const syncImpossible = (): void => {
-    const n = deps.impossibleCount();
+  const syncImpossible = (n: number): void => {
     if (n === impossibleShown) return;
     impossibleShown = n;
     impossibleB.hidden = n === 0;
@@ -380,16 +506,13 @@ export function mountShell(deps: ShellDeps): void {
   // The money in hand (docs/VIAS.md V0): roads are paid from it.
   const money = el('strong', 'v2-money');
   const moneyText = money.appendChild(document.createTextNode(''));
-  money.hidden = !deps.balance;
   let moneyShown = NaN;
-  const syncMoney = (): void => {
-    const value = deps.balance?.();
-    if (value === undefined || value === moneyShown) return;
+  const syncMoney = (value: number): void => {
+    if (value === moneyShown) return;
     moneyShown = value;
     moneyText.data = formatMoney(value);
     money.title = balanceTip();
   };
-  onLanguageChange(() => { moneyShown = NaN; syncMoney(); });
   city.append(sky, clock, money, impossibleB, stats);
 
   const speed = el('div', 'v2-speed');
@@ -401,14 +524,14 @@ export function mountShell(deps: ShellDeps): void {
     b.dataset['speed'] = s;
     b.innerHTML = s === '0' ? svg('pause', 16) : `${s}×`;
     b.title = s === '0' ? t('sim.pause') : `${t('sim.speed')} ${s}×`;
-    b.onclick = () => press(`.simulation-controls [data-speed="${s}"]`);
+    b.onclick = () => deps.setSpeed(Number(s));
     speedButtons.push(b);
     speed.appendChild(b);
   }
 
   const actionsBar = el('div', 'v2-actions');
-  const undo = button('v2-icon', t('action.undo'), () => press('#undoAction'), svg('undo', 18));
-  const redo = button('v2-icon', t('action.redo'), () => press('#redoAction'), svg('redo', 18));
+  const undo = button('v2-icon', t('action.undo'), () => deps.undo(), svg('undo', 18));
+  const redo = button('v2-icon', t('action.redo'), () => deps.redo(), svg('redo', 18));
   const menuB = button('v2-pill', t('builder.menu.app'), () => toggle('menu', menuB), svg('menu', 18));
   // Sliders, not the mountain-like chart line, which read as the Landscape icon.
   const simB = button('v2-pill', t('builder.menu.simulation'), () => toggle('sim', simB), svg('advanced', 18));
@@ -420,40 +543,35 @@ export function mountShell(deps: ShellDeps): void {
   // here, a show/hide pair in the zoning panel and a switch in the
   // simulation menu.
   const layersB = button('v2-pill', t('v2.layers'), () => toggle('layers', layersB), svg('layers', 18));
-  // Into the scenery on foot (`play.ts`): the way in, in plain sight, not only the J key.
-  const playB = button('v2-pill v2-play', t('play.button'), () => press('#playButton'), svg('player', 18));
   // The free flight (`render/planet/flight.ts`, main.ts): in plain sight, not only the V key.
   const flightB = button('v2-pill', t('flight.button'), () => window.dispatchEvent(new CustomEvent('roadcraft:flight')), svg('rocket', 18));
   flightB.title = t('flight.on');
-  playB.title = t('play.start');
-  // See inside the buildings (the Builder's own toggle, `workspace.ts`): its
-  // switch is a layer; while it is on, the floor and a step down and up stay in the bar.
-  const insideButtons = (): HTMLButtonElement[] => [...document.querySelectorAll<HTMLButtonElement>('.bw-inside .bw-icon-button')];
-  const insideOn = (): boolean => insideButtons()[0]?.classList.contains('active') ?? false;
-  const insideLevel = (): string => document.querySelector('.bw-inside .bw-inside-level')?.textContent ?? '';
-  const insideDownB = button('v2-icon', t('inside.down'), () => { insideButtons()[1]?.click(); syncInside(); }, builderIconSvg('floorDown', 16));
-  const insideUpB = button('v2-icon', t('inside.up'), () => { insideButtons()[2]?.click(); syncInside(); }, builderIconSvg('floorUp', 16));
+  // See inside the buildings (the Builder's command, `buildingsWiring.ts`):
+  // its switch is a layer; while it is on, the floor and a step down and up
+  // stay in the bar. A building opened by a click on the map is told here too.
+  let inside = workspace.inside();
+  const seeInside = (command: 'toggle' | 'up' | 'down'): void => { inside = actions.seeInside(command); syncInside(); };
+  const insideDownB = button('v2-icon', t('inside.down'), () => seeInside('down'), builderIconSvg('floorDown', 16));
+  const insideUpB = button('v2-icon', t('inside.up'), () => seeInside('up'), builderIconSvg('floorUp', 16));
   const insideLevelEl = el('span', 'v2-inside-level');
-  const insideOff = button('v2-icon on', t('inside.toggle'), () => { insideButtons()[0]?.click(); syncInside(); }, builderIconSvg('interiorView', 18));
+  const insideOff = button('v2-icon on', t('inside.toggle'), () => seeInside('toggle'), builderIconSvg('interiorView', 18));
   const insideBar = el('div', 'v2-inside');
   insideBar.append(insideOff, insideDownB, insideLevelEl, insideUpB);
   /** The layers and whether each is on. */
   const LAYERS: readonly { key: string; tip: string; icon: string; on: () => boolean; flip: () => void }[] = [
     { key: 'v2.layer.grid', tip: 'v2.grid.toggle', icon: svg('grid', 18), on: roadGridShown, flip: () => setRoadGridShown(!roadGridShown()) },
     { key: 'zone.colours', tip: 'zone.colours', icon: svg('zones', 18), on: zoneColoursShown, flip: () => setZoneColoursShown(!zoneColoursShown()) },
-    { key: 'sim.congestionLabel', tip: 'sim.congestion', icon: svg('heat', 18), on: () => q('#congestionToggle')?.getAttribute('aria-pressed') === 'true', flip: () => press('#congestionToggle') },
-    { key: 'v2.layer.inside', tip: 'inside.toggle', icon: builderIconSvg('interiorView', 18), on: insideOn, flip: () => insideButtons()[0]?.click() },
+    { key: 'sim.congestionLabel', tip: 'sim.congestion', icon: svg('heat', 18), on: () => game.congestionOverlay, flip: () => deps.toggleCongestion() },
+    { key: 'v2.layer.inside', tip: 'inside.toggle', icon: builderIconSvg('interiorView', 18), on: () => inside.on, flip: () => seeInside('toggle') },
   ];
   const syncInside = (): void => {
-    const on = insideOn();
-    if (insideBar.hidden === on) insideBar.hidden = !on;
-    const level = insideLevel();
+    if (insideBar.hidden === inside.on) insideBar.hidden = !inside.on;
+    const level = inside.level === 0 ? t('inside.ground') : `${inside.level + 1}º`;
     if (insideLevelEl.textContent !== level) insideLevelEl.textContent = level;
   };
   syncInside();
-  onRoadGridChange(syncInside);
-  // "Play" only with walking the city on (`__PLAY_MODE__`, vite.config.ts).
-  actionsBar.append(...(__PLAY_MODE__ ? [playB] : []), ...(__PLANET__ ? [flightB] : []), insideBar, layersB, simB, camB, undo, redo, helpB, menuB);
+  workspace.onInside((now) => { inside = now; syncInside(); });
+  actionsBar.append(...(__PLANET__ ? [flightB] : []), insideBar, layersB, simB, camB, undo, redo, helpB, menuB);
   hud.append(city, speed, actionsBar);
 
   // ================================================================ popovers
@@ -465,6 +583,7 @@ export function mountShell(deps: ShellDeps): void {
     pop.hidden = true;
     popId = null;
     popAnchor = null;
+    tipCheck();
   };
   document.addEventListener('pointerdown', (e) => {
     if (!popId) return;
@@ -495,23 +614,37 @@ export function mountShell(deps: ShellDeps): void {
     const b = button('v2-row', label, () => { run(); closePop(); }, icon);
     return b;
   };
-  /** A select of the game's own, as a row of segments (a few choices, all in view). */
-  const segProxy = (label: string, selector: string): HTMLElement => {
-    const source = q<HTMLSelectElement>(selector);
-    return orow(label, choices([...(source?.options ?? [])].map((o) => ({
-      label: o.textContent ?? o.value,
-      on: o.value === source?.value,
-      run: () => { setInput(selector, o.value); if (popId) fillPop(popId); },
+  /** A choice among a few, as a row of segments (all in view); the menu redrawn with the new one lit. */
+  const seg = (label: string, items: readonly (readonly [value: string, label: string])[], value: string, pick: (v: string) => void): HTMLElement =>
+    orow(label, choices(items.map(([v, name]) => ({
+      label: name,
+      on: v === value,
+      run: () => { pick(v); if (popId) fillPop(popId); },
     }))));
-  };
+  /** The city's numbers as last computed (`onStatus`). */
+  let status: ShellStatus | null = null;
   /** The simulation's numbers, kept current while its menu is open. */
   let metricsBox: HTMLElement | null = null;
+  const METRICS = [['sim.metric.trips', 'trips'], ['sim.metric.lost', 'lost'], ['sim.metric.speed', 'meanSpeed'], ['sim.metric.queued', 'queued']] as const;
   const syncMetrics = (): void => {
-    const source = q('.sim-metrics');
-    if (!metricsBox || !source) return;
-    const dds = source.querySelectorAll('dd');
-    metricsBox.querySelectorAll('dd').forEach((dd, i) => { const v = dds[i]?.textContent ?? ''; if (dd.textContent !== v) dd.textContent = v; });
+    if (!metricsBox || !status) return;
+    const now = status;
+    metricsBox.querySelectorAll('dd').forEach((dd, i) => {
+      const key = METRICS[i]?.[1];
+      const v = key ? now[key] : '';
+      if (dd.textContent !== v) dd.textContent = v;
+    });
   };
+  /** The camera's buttons: each its command, its name and its icon. */
+  const CAMERA_BUTTONS = [
+    ['turnLeft', 'camera.turnLeft', '<path d="M4 12a8 8 0 1 0 2.3-5.7"/><path d="M4 4v4h4"/>'],
+    ['tiltDown', 'camera.tiltDown', '<path d="M3 20h18"/><path d="M5 20 20 13"/><path d="m16.2 11.9 3.8 1.1-2.2 3.2"/>'],
+    ['north', 'camera.north', '<path d="M12 3 15 12H9Z" fill="currentColor"/><path d="M12 21 9 12h6Z"/>'],
+    ['tiltUp', 'camera.tiltUp', '<path d="M3 20h18"/><path d="M7 20 14 4"/><path d="m10.6 6.4 3.4-2.4 1.1 4"/>'],
+    ['turnRight', 'camera.turnRight', '<path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v4h-4"/>'],
+    ['perspective', 'camera.perspective', '<path d="M4 7 12 3l8 4v10l-8 4-8-4Z"/><path d="M12 11v10"/><path d="m4 7 8 4 8-4"/>'],
+    ['reset', 'action.resetView', '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><circle cx="12" cy="12" r="2.5"/>'],
+  ] as const;
   /** The keys of each tool, as `main.ts` lists them for its help card. */
   const TOOL_KEYS: Readonly<Record<string, readonly (readonly [string, string])[]>> = {
     bulldoze: [['help.key.click', 'help.do.remove'], ['help.key.undo', 'help.do.undo']],
@@ -540,21 +673,22 @@ export function mountShell(deps: ShellDeps): void {
   function fillPop(id: string): void {
     const key = POP_TITLE[id];
     pop.replaceChildren(...(key ? [el('div', 'v2-pop-title', t(key))] : []), popBody(id));
+    tipCheck();
   }
   function popBody(id: string): HTMLElement {
     const body = el('div', 'v2-pop-body');
     metricsBox = null;
     if (id === 'menu') {
       body.append(
-        row(t('action.newMap'), () => press('#newMap'), svg('m_new', 18)),
-        row(t('action.openMap'), () => press('#openMap'), svg('m_open', 18)),
-        row(t('action.saveMap'), () => press('#saveMap'), svg('m_save', 18)),
+        row(t('action.newMap'), () => deps.newMap(), svg('m_new', 18)),
+        row(t('action.openMap'), () => deps.openMap(), svg('m_open', 18)),
+        row(t('action.saveMap'), () => deps.saveMap(), svg('m_save', 18)),
         el('hr'),
-        segProxy(t('menu.quality'), '#qualitySelect'),
-        segProxy(t('menu.language'), '#languageSelect'),
-        segProxy(t('menu.paint'), '#paintStyleSelect'),
+        seg(t('menu.quality'), deps.qualityLevels.map((q) => [q, t(`quality.${q}`)] as const), game.quality, (v) => deps.setQuality(v)),
+        seg(t('menu.language'), LANGUAGES.map((l) => [l.code, l.label] as const), language(), (v) => { if (v === 'en' || v === 'pt-BR') setLanguage(v); }),
+        seg(t('menu.paint'), (['br', 'us', 'eu', 'classic'] as const).map((p) => [p, t(`paint.${p}`)] as const), deps.markingStyle(), (v) => deps.setMarkingStyle(v)),
         el('hr'),
-        row(t('action.about'), () => press('#aboutButton'), svg('m_about', 18)),
+        row(t('action.about'), () => deps.about(), svg('m_about', 18)),
       );
     } else if (id === 'layers') {
       // Each layer a row: its icon, its name, a switch.
@@ -574,20 +708,25 @@ export function mountShell(deps: ShellDeps): void {
         body.appendChild(b);
       }
     } else if (id === 'sim') {
-      body.append(range('sim.traffic', '#trafficIntensity'), range('sim.people', '#pedIntensity'), segProxy(t('sim.demand'), '#demandLevel'));
-      const metrics = q('.sim-metrics');
-      if (metrics) {
-        metricsBox = el('dl', 'v2-metrics');
-        metricsBox.innerHTML = metrics.innerHTML;
-        body.appendChild(metricsBox);
-      }
+      const demands = [['0.55', 'sim.demand.low'], ['1', 'sim.demand.normal'], ['1.55', 'sim.demand.peak']] as const;
+      body.append(range('sim.traffic', 'trafficIntensity'), range('sim.people', 'pedIntensity'),
+        seg(t('sim.demand'), demands.map(([v, key]) => [v, t(key)] as const), String(deps.demand()), (v) => deps.setDemand(Number(v))));
+      metricsBox = el('dl', 'v2-metrics');
+      for (const [key] of METRICS) metricsBox.append(el('dt', '', t(key)), el('dd', '', '—'));
+      body.appendChild(metricsBox);
+      syncMetrics();
     } else if (id === 'camera') {
-      for (const b of document.querySelectorAll<HTMLButtonElement>('#cameraControls [data-camera], #resetView')) {
-        const label = (b.getAttribute('aria-label') ?? b.title).replace(/\s*\(.*$/, '');
-        const icon = b.querySelector('svg')?.outerHTML ?? '';
-        // A row of icons, as a camera bar: the name in the tooltip.
-        body.classList.add('icons');
-        body.appendChild(button('v2-icon', label, () => b.click(), icon));
+      // A row of icons, as a camera bar: the name in the tooltip.
+      body.classList.add('icons');
+      for (const [command, key, icon] of CAMERA_BUTTONS) {
+        if (!deps.cameraTurns && command !== 'reset') continue;
+        const label = t(key).replace(/\s*[(·].*$/, '');
+        const b = button(`v2-icon${command === 'perspective' && game.perspective ? ' on' : ''}`, label, () => {
+          deps.camera(command);
+          if (command === 'perspective') fillPop('camera');
+        }, svg('', 18).replace('</svg>', `${icon}</svg>`));
+        if (command === 'perspective') b.setAttribute('aria-pressed', String(game.perspective));
+        body.appendChild(b);
       }
     } else if (id === 'help') {
       // The keys of the tool in hand, the camera's and the game's: keys and
@@ -641,14 +780,14 @@ export function mountShell(deps: ShellDeps): void {
     b.onclick = () => {
       if (categoryOf(tool()) === c.id && open) {
         // A second click puts the tool down: the free hand.
-        press('.bw-fold');
+        deps.putDown();
         open = false;
         render();
         return;
       }
       open = true;
       // The tool in hand is not put away by its own button pressed again.
-      if (categoryOf(tool()) !== c.id || c.id === 'info') press(`.tool[data-tool="${c.tool}"]`);
+      if (categoryOf(tool()) !== c.id || c.id === 'info') deps.pickTool(c.tool);
       render();
     };
     catButtons.set(c.id, b);
@@ -663,12 +802,14 @@ export function mountShell(deps: ShellDeps): void {
   tabs.setAttribute('role', 'tablist');
   const tools = el('div', 'v2-head-tools');
   const close = button('v2-icon', t('v2.close'), () => {
-    press('.bw-fold');
+    deps.putDown();
     open = false;
     render();
   }, svg('close', 18));
   head.append(title, tabs);
   const hint = el('p', 'v2-hint');
+  // The canvas is described by it (`index.html`, aria-describedby).
+  hint.id = 'v2Hint';
   const body = el('div', 'v2-drawer-body');
   const options = el('div', 'v2-options');
   const strip = el('div', 'v2-strip');
@@ -690,8 +831,9 @@ export function mountShell(deps: ShellDeps): void {
 
   // The selection on the right: the road inspector lives here.
   const side = el('aside', 'v2-side');
-  const roadInspector = q('#inspector');
-  if (roadInspector) side.appendChild(roadInspector);
+  if (deps.inspectorPanel) side.appendChild(deps.inspectorPanel);
+  /** The Builder's selection panel (`workspace.ts`): the drawer gives way to it too. */
+  const builderInspector = workspace.root.querySelector<HTMLElement>('.bw-inspector');
 
   root.append(hud, pop, drawer, toolOptions, side, dock);
 
@@ -731,16 +873,13 @@ export function mountShell(deps: ShellDeps): void {
   });
   root.addEventListener('pointerdown', () => { tip.hidden = true; });
   // A control rebuilt or removed under the pointer takes its tooltip with it.
-  // Checked only while a tooltip is up (no timer otherwise).
-  let tipTimer: ReturnType<typeof setInterval> | null = null;
+  // Checked after each redraw of the panels, the only thing that removes them.
   const tipCheck = (): void => {
     if (tipFor && (!tipFor.isConnected || tipFor.getBoundingClientRect().width === 0)) {
       tipFor = null;
       tip.hidden = true;
     }
-    if (!tipFor && tipTimer !== null) { clearInterval(tipTimer); tipTimer = null; }
   };
-  root.addEventListener('pointerover', () => { if (tipFor && tipTimer === null) tipTimer = setInterval(tipCheck, 200); });
 
   // ================================================================ state
   let open = false;
@@ -829,7 +968,7 @@ export function mountShell(deps: ShellDeps): void {
   try { advanced = window.localStorage.getItem('roadcraft.builder.advanced') === '1'; } catch { /* off */ }
   const requested = new Set<string>();
 
-  const tool = (): string => (q('#game') as HTMLElement | null)?.dataset['tool'] ?? 'inspect';
+  const tool = (): string => game.tool;
   const categoryOf = (current: string): Category | null => {
     if (['road', 'upgrade', 'move', 'split', 'control', 'roundabout'].includes(current)) return 'roads';
     if (current === 'zone') return 'zones';
@@ -870,14 +1009,15 @@ export function mountShell(deps: ShellDeps): void {
     return wrap;
   };
   /** A thing: its picture, its name. */
-  const card = (label: string, on: boolean, run: () => void, picture?: string, iconHtml?: string, extra = ''): HTMLButtonElement => {
+  const card = (label: string, on: boolean, run: () => void, picture?: string, iconHtml?: string, extra = '', shortName?: string): HTMLButtonElement => {
     const b = el('button', `v2-card${on ? ' on' : ''}${extra ? ` ${extra}` : ''}`);
     b.type = 'button';
     b.title = label;
     const art = picture ? `<img class="v2-card-art" src="${picture}" alt="" />` : `<span class="v2-card-art glyph">${iconHtml ?? ''}</span>`;
     b.innerHTML = `${art}<span class="v2-card-name"></span>`;
     // The name under the picture, its aside in brackets left to the tooltip.
-    (b.querySelector('.v2-card-name') as HTMLElement).textContent = label.replace(/\s*\([^)]*\)\s*$/, '');
+    // A short name under the picture when the full one does not fit two lines.
+    (b.querySelector('.v2-card-name') as HTMLElement).textContent = shortName ?? label.replace(/\s*\([^)]*\)\s*$/, '');
     b.setAttribute('aria-label', label);
     b.onclick = run;
     return b;
@@ -932,47 +1072,75 @@ export function mountShell(deps: ShellDeps): void {
    * A slider row driving one of the game's own inputs: its name (the unit in
    * the dictionary's brackets moves to the number), the bar, the value.
    */
-  const range = (labelKey: string, selector: string, shortKey?: string): HTMLElement => {
+  /** A slider's number in the interface's language, with at most the decimals of its step. */
+  const numberFormats = new Map<string, Intl.NumberFormat>();
+  const numberText = (value: number, step: number): string => {
+    const digits = Math.min(3, (String(step).split('.')[1] ?? '').length);
+    const key = `${language()}:${digits}`;
+    let format = numberFormats.get(key);
+    if (!format) numberFormats.set(key, format = new Intl.NumberFormat(language(), { maximumFractionDigits: digits }));
+    return format.format(value);
+  };
+  /** The sliders on screen, by name: shown again when their number changes elsewhere (a key, an undo). */
+  const ranges = new Map<string, { input: HTMLInputElement; show: () => void }>();
+  const range = (labelKey: string, name: string, shortKey?: string): HTMLElement => {
     const full = t(labelKey);
     const unitMatch = /\(([^)]{1,4})\)\s*$/.exec(full);
     const unit = unitMatch ? ` ${unitMatch[1]}` : '';
     // One word at the left; the full name (with its unit) in the tooltip.
-    const name = shortKey ? t(shortKey) : full.replace(/\s*\([^)]*\)\s*$/, '');
-    const source = q<HTMLInputElement>(selector);
+    const shortName = shortKey ? t(shortKey) : full.replace(/\s*\([^)]*\)\s*$/, '');
+    const slider = deps.sliders[name];
     const input = el('input', 'v2-range');
     input.type = 'range';
     input.setAttribute('aria-label', full);
-    if (source) {
-      input.min = source.min;
-      input.max = source.max;
-      input.step = source.step;
-      input.value = source.value;
-    }
-    const out = el('output', 'v2-range-out', `${input.value}${unit}`);
-    input.oninput = () => {
-      setInput(selector, input.value);
-      out.textContent = `${source?.value ?? input.value}${unit}`;
+    const out = el('output', 'v2-range-out');
+    const show = (): void => {
+      if (!slider) return;
+      const now = slider.get();
+      const value = String(now);
+      if (input.value !== value) input.value = value;
+      // In the language's own notation ("1,2 m/s"), as many decimals as the step has.
+      const text = `${numberText(now, slider.step)}${unit}`;
+      if (out.textContent !== text) out.textContent = text;
     };
-    const r = orow(name, input, out);
+    if (slider) {
+      input.min = String(slider.min);
+      input.max = String(slider.max);
+      input.step = String(slider.step);
+    }
+    show();
+    input.oninput = () => {
+      slider?.set(Number(input.value));
+      show();
+    };
+    input.onchange = () => slider?.end?.();
+    ranges.set(name, { input, show });
+    const r = orow(shortName, input, out);
     r.title = full;
     r.classList.add('range');
     return r;
   };
+  /** Shows every slider on screen as the game has its number now (not the one being dragged). */
+  const syncRanges = (): void => {
+    for (const [name, r] of ranges) {
+      if (!r.input.isConnected) ranges.delete(name);
+      else if (document.activeElement !== r.input) r.show();
+    }
+  };
   /** An action on the whole map (clear every stroke of a brush), asking first as the game does. */
-  const mapAction = (label: string, selector: string, icon: string, danger = true): HTMLButtonElement =>
-    button(`v2-act${danger ? ' danger' : ''}`, label, () => { press(selector); render(); }, svg(icon, 16));
+  const mapAction = (label: string, name: string, icon: string, danger = true): HTMLButtonElement =>
+    button(`v2-act${danger ? ' danger' : ''}`, label, () => { deps.mapAction(name); render(); }, svg(icon, 16));
 
   // ------------------------------------------------------------ roads
   function renderRoads(current: string): void {
     title.textContent = t('tool.road');
     const modes: [string, string, string][] = [['road', t('tool.draw'), 'draw'], ['upgrade', t('tool.upgrade'), 'upgrade'], ['move', t('tool.move'), 'move'], ['split', t('tool.split'), 'split'], ['control', t('tool.control'), 'control']];
-    if (q('[data-road-op="roundabout"]')) modes.push(['roundabout', t('tool.roundabout'), 'roundabout']);
+    if (deps.roundabout) modes.push(['roundabout', t('tool.roundabout'), 'roundabout']);
     for (const [id, label, icon] of modes) {
       tabs.appendChild(tab(label, current === id, () => {
-        // The road tool's own button toggles it (`pickTool`): pressed while
-        // drawing, it put the tool away and closed the panel.
-        if (id === 'road') { if (current !== 'road') press('.tool[data-tool="road"]'); }
-        else press(`[data-road-op="${id}"]`);
+        // Taken in hand, never picked: picking the road tool from one of its
+        // own modes puts it away (`pickTool`), and Draw from Improve closed the panel.
+        if (current !== id) deps.setTool(id);
         render();
       }, false, svg(icon, 18)));
     }
@@ -981,11 +1149,11 @@ export function mountShell(deps: ShellDeps): void {
       // How the road is traced - straight, curved, free - or a whole grid of
       // blocks in one click, as Cities: Skylines II lists Grid among its
       // drawing modes (`editor/blocks.ts`). Picking a trace puts the grid down.
-      const traces = [...document.querySelectorAll<HTMLButtonElement>('.alignment-mode')].map((b) => ({
-        label: b.textContent?.trim() ?? '',
-        on: !g.armed && b.classList.contains('active'),
-        run: () => { g.armed = false; b.click(); render(); },
-        icon: svg(b.dataset['alignment'] ?? 'straight', 18),
+      const traces = (['straight', 'curve', 'free'] as const).map((a) => ({
+        label: t(`palette.alignment.${a}`),
+        on: !g.armed && game.alignment === a,
+        run: () => { g.armed = false; deps.setAlignment(a); render(); },
+        icon: svg(a, 18),
       }));
       traces.push({ label: t('palette.blocks'), on: g.armed, run: () => { g.armed = !g.armed; render(); }, icon: svg('blocks', 18) });
       options.appendChild(orow(t('palette.trace'), choices(traces)));
@@ -1010,24 +1178,24 @@ export function mountShell(deps: ShellDeps): void {
       // the catalogue carries its own (its card's "Customise..." changes them).
       const fromCatalog = drawProfile() !== null;
       // Lanes: the count the next road is laid with.
-      if (!fromCatalog) options.appendChild(orow(t('v2.row.lanes'), choices([...document.querySelectorAll<HTMLButtonElement>('[data-lane-choice]')].filter((b) => !b.hidden).map((b) => {
-        const id = b.dataset['laneChoice'] ?? '2';
-        return {
-          label: b.title || b.getAttribute('aria-label') || b.textContent?.trim() || '',
-          on: b.classList.contains('active'),
-          run: () => { b.click(); render(); },
-          disabled: b.disabled,
-          icon: svg(id === 'median' ? 'median' : `lanes${id}`, 18),
-        };
-      }))));
+      if (!fromCatalog) options.appendChild(orow(t('v2.row.lanes'), choices(deps.laneChoices().map((c) => ({
+        label: c.label,
+        on: c.on,
+        run: () => { deps.setLanes(c.id); render(); },
+        icon: svg(c.id === 'median' ? 'median' : `lanes${c.id}`, 18),
+      })))));
       // Total width, on the 1 m subgrid of the 10 m zoning grid; the class's own until stepped.
       const w = roadWidth();
+      const classWidth = deps.roadClasses().find((c) => c.index === game.roadTypeIndex)?.widthM ?? 10;
       if (!fromCatalog) options.appendChild(orow(t('v2.row.width'),
-        stepper(t('palette.width'), w === null ? t('palette.width.auto') : `${w} m`, (d) => { setRoadWidth((roadWidth() ?? defaultRoadWidth()) + d); }),
+        stepper(t('palette.width'), w === null ? t('palette.width.auto') : `${w} m`, (d) => { setRoadWidth((roadWidth() ?? classWidth) + d); }),
         w === null ? null : button('v2-icon', t('palette.width.auto'), () => { setRoadWidth(null); render(); }, svg('undo', 14))));
       // Height over the ground: a bridge above, a cutting or tunnel below.
-      const heightRow = orow(t('v2.row.height'), stepper(t('palette.height'), q('#roadHeightValue')?.textContent ?? '', (d) => press(`[data-height-step="${d}"]`)));
-      heightRow.title = `${t('palette.height')}: ${q('#roadHeightContext')?.textContent ?? ''}`;
+      const offset = game.roadHeightOffset;
+      const metres = offset / UNITS_PER_METER;
+      const heightText = `${Math.abs(metres - Math.round(metres)) < 1e-6 ? Math.round(metres) : formatDecimal(metres, 1)} m`;
+      const heightRow = orow(t('v2.row.height'), stepper(t('palette.height'), heightText, (d) => deps.stepRoadHeight(d)));
+      heightRow.title = `${t('palette.height')}: ${t(offset > 1e-6 ? 'palette.height.above' : offset < -1e-6 ? 'palette.height.below' : 'palette.height.ground')}`;
       options.appendChild(heightRow);
       // The sides of a cutting: a batter, or retaining walls (docs/VIAS.md V3).
       const walls = cutWallsChosen();
@@ -1068,18 +1236,19 @@ export function mountShell(deps: ShellDeps): void {
       // The road catalogue (the player's order of 2026-10-09): tabs by
       // category, a large card for each ready road; the main way to choose.
       strip.appendChild(catalogStrip({
-        classIndex: roadTypeIndex,
-        pickClass: (index) => q<HTMLButtonElement>(`.road-type[data-type-index="${index}"]`)?.click(),
+        classIndex: () => game.roadTypeIndex,
+        pickClass: (index) => deps.selectRoadType(index),
         refresh: () => render(),
       }));
     } else if (current === 'upgrade') {
       const { items } = section(t('palette.kind'));
-      for (const b of document.querySelectorAll<HTMLButtonElement>('.road-type[data-type-index]')) {
-        const img = b.querySelector('img')?.getAttribute('src') ?? undefined;
-        items.appendChild(card(b.querySelector('.road-type-name')?.textContent ?? '', b.classList.contains('active'), () => { b.click(); render(); }, img, undefined, 'wide'));
+      for (const c of deps.roadClasses()) {
+        const b = card(c.name, c.index === game.roadTypeIndex, () => { deps.selectRoadType(c.index); render(); }, c.picture, undefined, 'wide');
+        b.title = c.title;
+        items.appendChild(b);
       }
     } else if (current === 'roundabout') {
-      if (q('.road-palette .inspect-range input')) options.appendChild(range('v2.roundabout.radius', '.road-palette .inspect-range input'));
+      options.appendChild(range('v2.roundabout.radius', 'roundaboutRadius'));
       note(t('hint.roundabout'));
     } else {
       note(t(`hint.${current}`));
@@ -1095,47 +1264,42 @@ export function mountShell(deps: ShellDeps): void {
   let lastLotMode = 'add';
   function renderZones(): void {
     title.textContent = t('tool.zone');
-    const active = (selector: string): boolean => q<HTMLButtonElement>(selector)?.classList.contains('active') ?? false;
-    const pick = (selector: string): void => { q<HTMLButtonElement>(selector)?.click(); };
-    const modeNow = q('[data-zone-mode].active')?.dataset['zoneMode'] ?? 'brush';
+    const modeNow = game.zoneMode;
     const painting = modeNow === 'brush';
     if (!painting) lastLotMode = modeNow;
     tabs.append(
-      tab(t('v2.zone.paint'), painting, () => { pick('[data-zone-mode="brush"]'); render(); }, false, svg('brush', 18)),
-      tab(t('zone.lots'), !painting, () => { pick(`[data-zone-mode="${lastLotMode}"]`); render(); }, false, svg('lotEdit', 18)),
+      tab(t('v2.zone.paint'), painting, () => { deps.setZone({ mode: 'brush' }); render(); }, false, svg('brush', 18)),
+      tab(t('zone.lots'), !painting, () => { deps.setZone({ mode: lastLotMode }); render(); }, false, svg('lotEdit', 18)),
     );
     if (painting) {
       // The use painted on the lots, or the eraser that takes it off.
-      const erasing = active('#zoneRemove');
+      const erasing = game.zoneEraser;
       const use = section(t('v2.zone.use')).items;
       for (const [key, colour] of [['residential', '#58c26f'], ['commercial', '#4aa3e8'], ['industrial', '#e6b84a']] as const) {
-        const b = q<HTMLButtonElement>(`[data-zone-use="${key}"]`);
-        use.appendChild(card(t(`zone.${key}`), !erasing && (b?.classList.contains('active') ?? false), () => { if (erasing) pick('#zoneRemove'); b?.click(); render(); }, undefined, `<i class="v2-zone-swatch" style="--zone:${colour}"></i>`));
+        use.appendChild(card(t(`zone.${key}`), !erasing && game.zoneUse === key, () => { deps.setZone({ eraser: false, use: key }); render(); }, undefined, `<i class="v2-zone-swatch" style="--zone:${colour}"></i>`));
       }
-      use.appendChild(card(t('zone.remove'), erasing, () => { if (!erasing) pick('#zoneRemove'); render(); }, undefined, svg('eraser', 30), 'danger'));
-      options.appendChild(orow(t('v2.zone.density'), choices((['low', 'medium', 'high'] as const).map((key) => {
-        const b = q<HTMLButtonElement>(`[data-zone-density="${key}"]`);
-        return { label: `${t('v2.zone.density')}: ${t(`zone.${key}`)}`, on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); }, icon: svg(key, 18) };
-      }))));
+      use.appendChild(card(t('zone.remove'), erasing, () => { deps.setZone({ eraser: true }); render(); }, undefined, svg('eraser', 30), 'danger'));
+      options.appendChild(orow(t('v2.zone.density'), choices((['low', 'medium', 'high'] as const).map((key) => ({
+        label: `${t('v2.zone.density')}: ${t(`zone.${key}`)}`, on: game.zoneDensity === key, run: () => { deps.setZone({ density: key }); render(); }, icon: svg(key, 18),
+      })))));
       note(t('hint.zone'));
       return;
     }
     const lots = section(t('zone.lots')).items;
     for (const [mode, key, icon] of [['add', 'zone.lot.shape.rect', 'plus'], ['polygon', 'zone.lot.shape.polygon', 'lotPolygon'], ['edit', 'zone.lot.edit', 'lotEdit'], ['curve', 'zone.lot.curve', 'lotCurve'],
       ['front', 'zone.lot.front', 'lotFront'], ['split', 'zone.lot.split', 'split'], ['join', 'zone.lot.join', 'join'], ['delete', 'zone.lot.delete', 'lotDelete']] as const) {
-      lots.appendChild(card(t(key), modeNow === mode, () => { pick(`[data-zone-mode="${mode}"]`); render(); }, undefined, svg(icon, 30), mode === 'delete' ? 'danger' : ''));
+      lots.appendChild(card(t(key), modeNow === mode, () => { deps.setZone({ mode }); render(); }, undefined, svg(icon, 30), mode === 'delete' ? 'danger' : '',
+        mode === 'delete' ? t('zone.lot.delete.short') : undefined));
     }
     // How the split tool cuts, and into how many - shown while it is chosen.
     if (modeNow === 'split') {
-      options.appendChild(orow(t('v2.row.cut'), choices((['vertical', 'horizontal', 'line'] as const).map((kind) => {
-        const b = q<HTMLButtonElement>(`[data-lot-split="${kind}"]`);
-        return { label: t(`zone.split.${kind}`), on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); }, icon: svg(`split_${kind}`, 18) };
-      }))));
-      if (!active('[data-lot-split="line"]')) {
-        options.appendChild(orow(t('v2.row.parts'), choices([2, 3, 4, 5, 6].map((n) => {
-          const b = q<HTMLButtonElement>(`[data-lot-parts="${n}"]`);
-          return { label: `${t('zone.split.into')} ${n}`, on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); }, icon: `<b class="v2-num">${n}</b>` };
-        }))));
+      options.appendChild(orow(t('v2.row.cut'), choices((['vertical', 'horizontal', 'line'] as const).map((kind) => ({
+        label: t(`zone.split.${kind}`), on: game.lotSplitKind === kind, run: () => { deps.setZone({ splitKind: kind }); render(); }, icon: svg(`split_${kind}`, 18),
+      })))));
+      if (game.lotSplitKind !== 'line') {
+        options.appendChild(orow(t('v2.row.parts'), choices([2, 3, 4, 5, 6].map((n) => ({
+          label: `${t('zone.split.into')} ${n}`, on: game.lotSplitParts === n, run: () => { deps.setZone({ splitParts: n }); render(); }, icon: `<b class="v2-num">${n}</b>`,
+        })))));
       }
     }
     note(t('zone.lots.help'));
@@ -1160,7 +1324,7 @@ export function mountShell(deps: ShellDeps): void {
     kind === 'guardrail' || kind === 'railing' ? svg(kind, size) : builderIconSvg(kind === 'hedge' ? 'hedge' : kind === 'wall' ? 'wallRun' : 'fenceRun', size);
   /** What each tab last had in hand, so going back to it picks that again. */
   const landLast: Record<LandTab, string> = { relief: 'raise', ground: 'paint', nature: 'trees', sky: 'cloud', street: 'streetscape' };
-  const terrainModeNow = (): string => q('[data-terrain-mode].active')?.dataset['terrainMode'] ?? 'raise';
+  const terrainModeNow = (): string => game.terrainMode;
   const isEffect = (kind: string): boolean => (EFFECT_KINDS as readonly string[]).includes(kind);
   const landTabOf = (current: string): LandTab => {
     if (current === 'streetscape' || current === 'barrier' || current === 'pole') return 'street';
@@ -1171,27 +1335,22 @@ export function mountShell(deps: ShellDeps): void {
     if (SKY_MODES.some(([m]) => m === mode)) return 'sky';
     return 'relief';
   };
-  /** The terrain tool in hand (pressed only when it is not: pressed again it is put away), then its mode. */
+  /** The terrain tool in hand (picked only when it is not: picked again it is put away), then its mode. */
   const useTerrain = (mode: string): void => {
-    if (tool() !== 'terrain') press('.tool[data-tool="terrain"]');
-    q<HTMLButtonElement>(`[data-terrain-mode="${mode}"]`)?.click();
+    if (tool() !== 'terrain') deps.pickTool('terrain');
+    deps.setTerrainMode(mode);
   };
   const useTool = (id: string): void => {
-    if (tool() !== id) press(`.tool[data-tool="${id}"]`);
+    if (tool() !== id) deps.pickTool(id);
   };
   const useElement = (kind: ElementKind): void => {
     setElementKind(kind);
     useTerrain('elements');
   };
-  /** The wall tool's kinds are drawn by the game when the tool is taken up: pressed once they exist. */
   const useBarrier = (kind: string): void => {
     useTool('barrier');
-    let tries = 0;
-    const pick = (): void => {
-      const b = q<HTMLButtonElement>(`.tool-help-kinds [data-barrier="${kind}"]`);
-      if (b) { b.click(); render(); } else if (tries++ < 6) requestAnimationFrame(pick);
-    };
-    pick();
+    deps.setBarrierKind(kind);
+    render();
   };
   const openLandTab = (id: LandTab): void => {
     const last = landLast[id];
@@ -1211,9 +1370,13 @@ export function mountShell(deps: ShellDeps): void {
     for (const [id, key, icon] of [['relief', 'v2.land.relief', 'terrain'], ['ground', 'v2.land.ground', 'paint'], ['nature', 'v2.land.nature', 'ls_tree'], ['sky', 'v2.land.sky', 'cloud'], ['street', 'v2.land.street', 'ls_bench']] as const) {
       tabs.appendChild(tab(t(key), now === id, () => { openLandTab(id); render(); }, false, svg(icon, 18)));
     }
-    const terrainCard = (m: string, icon: string): HTMLButtonElement =>
-      card(t(`terrain.${m}`), inTerrain && mode === m, () => { useTerrain(m); render(); }, undefined, svg(icon, 30));
-    const brushRows = (...extra: HTMLElement[]): void => { options.append(range('terrain.radius', '#terrainRadius'), ...extra); };
+    const terrainCard = (m: string, icon: string): HTMLButtonElement => {
+      const b = card(t(`terrain.${m}`), inTerrain && mode === m, () => { useTerrain(m); render(); }, undefined, svg(icon, 30));
+      // The brush it takes, for the probes (`scripts/probe-terrain-relief.mjs`).
+      b.dataset['terrainMode'] = m;
+      return b;
+    };
+    const brushRows = (...extra: HTMLElement[]): void => { options.append(range('terrain.radius', 'terrainRadius'), ...extra); };
     if (now === 'relief') {
       const shape = section(t('v2.terrain.brush')).items;
       for (const [m, icon] of RELIEF_MODES) shape.appendChild(terrainCard(m, icon));
@@ -1225,16 +1388,16 @@ export function mountShell(deps: ShellDeps): void {
           { label: t('gully.cut'), on: !gullyErase(), run: () => { setGullyErase(false); render(); }, icon: svg('brush', 18) },
           { label: t('gully.erase'), on: gullyErase(), run: () => { setGullyErase(true); render(); }, icon: svg('eraser', 18) },
         ])));
-        brushRows(range('gully.strength', '#gullyStrength', 'terrain.strength'));
-        options.append(subhead(t('v2.map')), range('gully.auto', '#gullyAuto', 'v2.s.gullyAuto'), orow(t('v2.row.clear'), mapAction(t('gully.clear'), '#clearGullies', 'trash')));
+        brushRows(range('gully.strength', 'gullyStrength', 'terrain.strength'));
+        options.append(subhead(t('v2.map')), range('gully.auto', 'gullyAuto', 'v2.s.gullyAuto'), orow(t('v2.row.clear'), mapAction(t('gully.clear'), 'clearGullies', 'trash')));
         return;
       }
-      brushRows(range('terrain.strength', '#terrainStrength'), range('terrain.hardness', '#terrainHardness'));
+      brushRows(range('terrain.strength', 'terrainStrength'), range('terrain.hardness', 'terrainHardness'));
       if (mode === 'river') {
         // The water of every river and lake: how rough, how much foam, how fast.
-        options.append(subhead(t('water.title')), range('water.waves', '#waterWaves'), range('water.foam', '#waterFoam'), range('water.current', '#waterCurrent'));
+        options.append(subhead(t('water.title')), range('water.waves', 'waterWaves'), range('water.foam', 'waterFoam'), range('water.current', 'waterCurrent'));
       }
-      options.append(subhead(t('v2.map')), orow(t('v2.row.clear'), mapAction(t('terrain.clear'), '#clearTerrain', 'flatten')));
+      options.append(subhead(t('v2.map')), orow(t('v2.row.clear'), mapAction(t('terrain.clear'), 'clearTerrain', 'flatten')));
     } else if (now === 'ground') {
       // The grounds, then the biomes - one swatch each (`world/terrainPaint.ts`).
       const painting = inTerrain && mode === 'paint';
@@ -1244,14 +1407,14 @@ export function mountShell(deps: ShellDeps): void {
         const isBiome = (BIOME_SWATCHES as readonly string[]).includes(kind);
         (isBiome ? biomes : ground).appendChild(card(t(`paint.kind.${kind}`), painting && paintKind() === kind, () => { setPaintKind(kind); useTerrain('paint'); render(); }, undefined, swatchArt(PAINT_SWATCH[kind])));
       }
-      brushRows(range('terrain.strength', '#terrainStrength'), range('terrain.hardness', '#terrainHardness'));
+      brushRows(range('terrain.strength', 'terrainStrength'), range('terrain.hardness', 'terrainHardness'));
       // The map's own biome - the ecosystem wherever nothing else is painted.
-      options.append(subhead(t('v2.map')), orow(t('v2.row.biome'), choices([...document.querySelectorAll<HTMLButtonElement>('[data-map-biome]')].map((b) => {
-        const key = b.dataset['mapBiome'] as string;
+      const biomeNow = deps.mapBiome();
+      options.append(subhead(t('v2.map')), orow(t('v2.row.biome'), choices(['none', ...BIOME_SWATCHES].map((key) => {
         return {
           label: `${t('terrain.mapBiome')}: ${key === 'none' ? t('terrain.mapBiome.none') : t(`paint.kind.${key}`)}`,
-          on: b.getAttribute('aria-pressed') === 'true',
-          run: () => { b.click(); render(); },
+          on: biomeNow === key,
+          run: () => { deps.setMapBiome(key); render(); },
           icon: key === 'none' ? '<i class="v2-ground none"></i>' : `<i class="v2-ground" style="--c:${PAINT_SWATCH[key as PaintKind]}"></i>`,
         };
       }))));
@@ -1270,8 +1433,8 @@ export function mountShell(deps: ShellDeps): void {
         options.appendChild(orow(t('v2.row.brush'), choices(TREE_MODES.map((m) => ({
           label: t(`tree.mode.${m}`), on: treeMode() === m, run: () => { setTreeMode(m); render(); }, icon: svg(icons[m], 18),
         })))));
-        brushRows(range('tree.density', '#treeDensity', 'v2.zone.density'), range('tree.height', '#treeHeight'), range('tree.variation', '#treeVariation', 'v2.s.variation'), range('tree.spacing', '#treeSpacing', 'v2.s.spacing'));
-        options.append(subhead(t('v2.map')), orow(t('v2.row.clear'), mapAction(t('tree.clear'), '#clearTrees', 'trash')));
+        brushRows(range('tree.density', 'treeDensity', 'v2.zone.density'), range('tree.height', 'treeHeight'), range('tree.variation', 'treeVariation', 'v2.s.variation'), range('tree.spacing', 'treeSpacing', 'v2.s.spacing'));
+        options.append(subhead(t('v2.map')), orow(t('v2.row.clear'), mapAction(t('tree.clear'), 'clearTrees', 'trash')));
       } else if (inTerrain && mode === 'elements') {
         elementRows();
       }
@@ -1288,24 +1451,24 @@ export function mountShell(deps: ShellDeps): void {
         options.appendChild(orow(t('v2.row.brush'), choices(CLOUD_MODES.map((m) => ({
           label: t(`cloud.${m}`), on: cloudMode() === m, run: () => { setCloudMode(m); render(); }, icon: svg(icons[m], 18),
         })))));
-        options.append(range('cloud.size', '#cloudSize'), range('cloud.height', '#cloudHeight', 'v2.s.base'), range('cloud.density', '#cloudDensity'));
+        options.append(range('cloud.size', 'cloudSize'), range('cloud.height', 'cloudHeight', 'v2.s.base'), range('cloud.density', 'cloudDensity'));
         // Many at once over the whole sky, each then the tool's to move or take away.
-        options.append(subhead(t('cloud.spread')), range('cloud.count', '#cloudCount'), range('cloud.variation', '#cloudVariation', 'v2.s.variation'),
-          orow(t('v2.row.sky'), mapAction(t('cloud.scatter'), '#scatterClouds', 'scatter', false), mapAction(t('cloud.clear'), '#clearClouds', 'trash')));
+        options.append(subhead(t('cloud.spread')), range('cloud.count', 'cloudCount'), range('cloud.variation', 'cloudVariation', 'v2.s.variation'),
+          orow(t('v2.row.sky'), mapAction(t('cloud.scatter'), 'scatterClouds', 'scatter', false), mapAction(t('cloud.clear'), 'clearClouds', 'trash')));
       } else if (mode === 'fog') {
         // The fog brush lays or wipes banks, each keeping its own height and drift (`world/fogPaint.ts`).
         options.appendChild(orow(t('v2.row.brush'), choices([
           { label: t('fog.lay'), on: !fogErase(), run: () => { setFogErase(false); render(); }, icon: svg('brush', 18) },
           { label: t('fog.erase'), on: fogErase(), run: () => { setFogErase(true); render(); }, icon: svg('eraser', 18) },
         ])));
-        brushRows(range('fog.strength', '#fogStrength', 'terrain.strength'), range('fog.height', '#fogHeight'), range('fog.speed', '#fogSpeed', 'v2.s.wind'));
+        brushRows(range('fog.strength', 'fogStrength', 'terrain.strength'), range('fog.height', 'fogHeight'), range('fog.speed', 'fogSpeed', 'v2.s.wind'));
         // The whole map's: every bank's thickness at once, and the haze over everything.
-        options.append(subhead(t('v2.map')), range('fog.mapDensity', '#fogMapDensity', 'v2.s.fogAll'), range('atmo.fog', '#atmoFog'), range('atmo.fogHeight', '#atmoFogHeight', 'v2.s.mistHeight'),
-          orow(t('v2.row.clear'), mapAction(t('fog.clear'), '#clearFog', 'trash')));
+        options.append(subhead(t('v2.map')), range('fog.mapDensity', 'fogMapDensity', 'v2.s.fogAll'), range('atmo.fog', 'atmoFog'), range('atmo.fogHeight', 'atmoFogHeight', 'v2.s.mistHeight'),
+          orow(t('v2.row.clear'), mapAction(t('fog.clear'), 'clearFog', 'trash')));
       } else if (mode === 'weather') {
         // Rain, wind, lightning and thunder over the whole map; a click calls a bolt down there (`world/weather.ts`).
-        options.append(range('weather.rain', '#weatherRain'), range('weather.wind', '#weatherWind'), range('weather.windDirection', '#weatherWindDir', 'v2.s.direction'),
-          subhead(t('weather.storm')), range('weather.lightning', '#weatherLightning', 'v2.s.lightning'), range('weather.thunder', '#weatherThunder', 'v2.s.thunder'));
+        options.append(range('weather.rain', 'weatherRain'), range('weather.wind', 'weatherWind'), range('weather.windDirection', 'weatherWindDir', 'v2.s.direction'),
+          subhead(t('weather.storm')), range('weather.lightning', 'weatherLightning', 'v2.s.lightning'), range('weather.thunder', 'weatherThunder', 'v2.s.thunder'));
       } else if (mode === 'elements') {
         elementRows();
       }
@@ -1317,7 +1480,7 @@ export function mountShell(deps: ShellDeps): void {
         furniture.appendChild(card(t(`streetscape.${kind}`), current === 'streetscape' && kindNow === kind, () => { setStreetscapeKind(kind); useTool('streetscape'); render(); }, undefined, svg(`ls_${kind}`, 30)));
       }
       const walls = section(t('v2.land.walls')).items;
-      const barrierNow = q('.tool-help-kinds [data-barrier].active')?.dataset['barrier'] ?? '';
+      const barrierNow = game.barrierKind;
       for (const kind of BARRIER_KINDS) {
         walls.appendChild(card(t(`barrier.kind.${kind}`), current === 'barrier' && barrierNow === kind, () => useBarrier(kind), undefined, BARRIER_ICON(kind, 30)));
       }
@@ -1348,10 +1511,10 @@ export function mountShell(deps: ShellDeps): void {
     options.appendChild(orow(t('v2.row.brush'), choices((['lay', 'eraseKind', 'eraseAll'] as const).map((m) => ({
       label: t(`el.mode.${m}`), on: elementMode() === m, run: () => { setElementMode(m); render(); }, icon: svg(icons[m], 18),
     })))));
-    options.append(range('terrain.radius', '#terrainRadius'), range('el.density', '#elDensity'), range('el.size', '#elSize'),
-      range('el.variation', '#elVariation', 'v2.s.variation'), range('el.spacing', '#elSpacing', 'v2.s.spacing'), range('el.strength', '#elStrength', 'terrain.strength'));
-    if (isEffect(elementKind())) options.appendChild(range('el.intensity', '#elIntensity', 'v2.s.effect'));
-    options.append(subhead(t('v2.map')), orow(t('v2.row.clear'), mapAction(t('el.clear'), '#clearElements', 'trash')));
+    options.append(range('terrain.radius', 'terrainRadius'), range('el.density', 'elDensity'), range('el.size', 'elSize'),
+      range('el.variation', 'elVariation', 'v2.s.variation'), range('el.spacing', 'elSpacing', 'v2.s.spacing'), range('el.strength', 'elStrength', 'terrain.strength'));
+    if (isEffect(elementKind())) options.appendChild(range('el.intensity', 'elIntensity', 'v2.s.effect'));
+    options.append(subhead(t('v2.map')), orow(t('v2.row.clear'), mapAction(t('el.clear'), 'clearElements', 'trash')));
   }
   /** A text box in the options; the keys typed stay in it (the game's shortcuts do not see them). */
   function textInput(placeholder: string, value: string, set: (v: string) => void): HTMLInputElement {
@@ -1373,6 +1536,7 @@ export function mountShell(deps: ShellDeps): void {
     const kinds: [TransitToolKind, 'train' | 'metro' | undefined, string, string][] = [
       ['stop', undefined, t('transit.tool.stop'), 'tr_stop'],
       ['terminal', undefined, t('transit.tool.terminal'), 'tr_terminal'],
+      ['bay', undefined, t('transit.tool.bay'), 'tr_bay'],
       ['track', 'train', t('transit.tool.trainTrack'), 'tr_track'],
       ['station', 'train', t('transit.tool.trainStation'), 'tr_station'],
       ['track', 'metro', t('transit.tool.metroTrack'), 'tr_metro'],
@@ -1638,13 +1802,12 @@ export function mountShell(deps: ShellDeps): void {
     const showDrawer = open && cat !== null;
     drawer.hidden = !showDrawer;
     toolOptions.hidden = !showDrawer;
-    side.hidden = q('#inspector')?.classList.contains('hidden') ?? true;
     root.dataset['tool'] = current;
     // Whether the player has the Information tool open (not merely no tool in
     // hand, which is also 'inspect'): the game draws road gizmos only then.
     document.body.dataset['infoTool'] = open && cat === 'info' ? 'on' : 'off';
     syncSide();
-    if (!showDrawer) return;
+    if (!showDrawer) { tipCheck(); return; }
     // Keep the search box focused across a rebuild.
     const focused = document.activeElement instanceof HTMLInputElement && document.activeElement.classList.contains('v2-search');
     const scroll = strip.scrollLeft;
@@ -1682,6 +1845,7 @@ export function mountShell(deps: ShellDeps): void {
     }
     updateHint();
     fitDrawer();
+    tipCheck();
   }
   /**
    * The asset panel stands centred in the room between the tool options
@@ -1695,7 +1859,7 @@ export function mountShell(deps: ShellDeps): void {
     let left = 12;
     let right = vw - 12;
     if (!toolOptions.hidden) left = Math.max(left, toolOptions.getBoundingClientRect().right + 12);
-    const sel = [side, q('#builder .bw-inspector')].filter((e): e is HTMLElement => !!e && !e.hidden && e.getBoundingClientRect().width > 0);
+    const sel = [side, builderInspector].filter((e): e is HTMLElement => !!e && !e.hidden && e.getBoundingClientRect().width > 0);
     for (const e of sel) {
       const r = e.getBoundingClientRect();
       // Only what reaches down to the panel's height matters.
@@ -1715,43 +1879,39 @@ export function mountShell(deps: ShellDeps): void {
   }
   window.addEventListener('resize', () => fitDrawer());
 
+  /** The tool's hint as the game last said it (`onHint`); the Builder's own while it is in hand. */
+  let gameHintText = '';
   function updateHint(): void {
-    const current = tool();
-    const text = current === 'building' ? builder?.hint ?? '' : (q('#hint')?.textContent ?? '');
+    const text = tool() === 'building' ? builder?.hint ?? '' : gameHintText;
     if (hint.textContent !== text) hint.textContent = text;
-
   }
 
-  // The HUD follows the game's numbers.
-  const tick = (): void => {
-    // Nothing to show in a hidden tab (Page Visibility API): no reads, no writes.
-    if (document.hidden) return;
-    const time = q('#cityClock')?.textContent ?? '';
-    if (clockText.data !== time) clockText.data = time;
-    const parts = ['#residentCount', '#vehicleCount', '#pedCount'].map((s) => q(s)?.textContent ?? '').filter(Boolean);
-    const line = parts.join('  ·  ');
+  // The HUD: the city's numbers as the game computes them (`updateStatus`,
+  // a few times a second while the city runs), written only when they change.
+  const showStatus = (now: ShellStatus): void => {
+    status = now;
+    if (clockText.data !== now.clock) clockText.data = now.clock;
+    const line = [now.vehicles, now.people].filter(Boolean).join('  ·  ');
     if (statsText.data !== line) statsText.data = line;
-    syncSky();
-    syncImpossible();
-    syncMoney();
-    const active = q('.simulation-controls [data-speed].active')?.dataset['speed'] ?? '1';
-    for (const b of speedButtons) {
-      const on = b.dataset['speed'] === active;
-      if (b.classList.contains('on') !== on) b.classList.toggle('on', on);
-    }
-    // Written only when they change: every write is a mutation.
-    const canUndo = !(q<HTMLButtonElement>('#undoAction')?.disabled ?? false);
-    const canRedo = !(q<HTMLButtonElement>('#redoAction')?.disabled ?? false);
-    if (undo.disabled === canUndo) undo.disabled = !canUndo;
-    if (redo.disabled === canRedo) redo.disabled = !canRedo;
-    syncInside();
+    syncImpossible(now.impossible);
+    syncMoney(now.balance);
     if (popId === 'sim') syncMetrics();
-    updateHint();
-    syncSide();
+  };
+  deps.onStatus(showStatus);
+  const syncSpeed = (): void => {
+    const active = game.paused ? 0 : game.speed;
+    for (const b of speedButtons) {
+      const on = Number(b.dataset['speed']) === active;
+      if (b.classList.contains('on') !== on) b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    }
+  };
+  const syncHistory = (): void => {
+    undo.disabled = !game.canUndo;
+    redo.disabled = !game.canRedo;
   };
   // The game's answers - saved, refused, undone, a road that cannot be laid -
-  // flash in its hint bar, which this interface does not show: they appear
-  // here a moment, above the dock, and a one-shot choice they end (the block
+  // appear a moment above the dock, and a one-shot choice they end (the block
   // grid laid) is redrawn.
   const toast = el('div', 'v2-toast');
   toast.setAttribute('role', 'status');
@@ -1759,30 +1919,28 @@ export function mountShell(deps: ShellDeps): void {
   toast.hidden = true;
   root.appendChild(toast);
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
-  const gameHint = q('#hint');
-  if (gameHint) {
-    new MutationObserver(() => {
-      if (!gameHint.classList.contains('flash')) return;
-      const text = gameHint.textContent ?? '';
-      if (!text) return;
-      toast.textContent = text;
-      toast.hidden = false;
-      if (toastTimer !== null) clearTimeout(toastTimer);
-      toastTimer = setTimeout(() => { toast.hidden = true; toastTimer = null; }, 2400);
-      later();
-    }).observe(gameHint, { attributes: true, attributeFilter: ['class'], childList: true, characterData: true, subtree: true });
-  }
+  deps.onHint((text, flash) => {
+    if (!flash) {
+      gameHintText = text;
+      updateHint();
+      return;
+    }
+    if (!text) return;
+    toast.textContent = text;
+    toast.hidden = false;
+    if (toastTimer !== null) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toast.hidden = true; toastTimer = null; }, 2400);
+    later();
+  });
   function syncSide(): void {
-    const roadSide = !(q('#inspector')?.classList.contains('hidden') ?? true);
+    const roadSide = game.inspectorOpen;
     if (side.hidden === roadSide) side.hidden = !roadSide;
-    const builderSide = !(q('#builder .bw-inspector')?.hidden ?? true);
+    const builderSide = !(builderInspector?.hidden ?? true);
     root.classList.toggle('has-side', roadSide || builderSide);
   }
-  setInterval(tick, 250);
-  tick();
 
-  // Re-render when the game changes a tool or an option: its own controls
-  // carry the truth (classes, pressed states), and the Builder reports its state.
+  // Redrawn when the game's state changes (told once a frame, `gameState.flush`),
+  // at the next frame, once however many changes came.
   let pending = false;
   const later = (): void => {
     if (pending) return;
@@ -1792,30 +1950,27 @@ export function mountShell(deps: ShellDeps): void {
       render();
     });
   };
-  // Only a real change: the game rewrites some states every frame with the
-  // value they already had (the speed buttons' aria-pressed), and every such
-  // write rebuilt the whole panel - the buttons flickered under the pointer.
-  const watch = new MutationObserver((records) => {
-    if (records.some((r) => r.target instanceof Element && r.attributeName && r.target.getAttribute(r.attributeName) !== r.oldValue)) later();
-  });
-  const game = q('#game');
-  if (game) watch.observe(game, { attributes: true, attributeOldValue: true, attributeFilter: ['data-tool'] });
-  // Values the game writes as text that the options mirror (the road's height,
-  // stepped from the keyboard): the panel showed the step before the last one.
-  const mirrored = new MutationObserver(() => later());
-  for (const id of ['roadHeightValue']) {
-    const node = document.getElementById(id);
-    if (node) mirrored.observe(node, { childList: true, characterData: true, subtree: true });
-  }
-  const builderRoot = document.getElementById('builder');
-  if (builderRoot) watch.observe(builderRoot, { attributes: true, attributeOldValue: true, subtree: true, attributeFilter: ['class', 'aria-pressed'] });
+  deps.game.watch(['sky'], syncSky);
+  deps.game.watch(['paused', 'speed'], syncSpeed);
+  // An undo or a load changes the map's own numbers (the fog, the weather, the biome) under the panel.
+  deps.game.watch(['canUndo', 'canRedo'], () => { syncHistory(); later(); });
+  deps.game.watch(['inspectorOpen'], () => { syncSide(); later(); });
+  // What the panels show: the tool in hand and each tool's settings.
+  deps.game.watch(['tool', 'roadTypeIndex', 'alignment', 'roadHeightOffset', 'roadLanePreset', 'terrainMode', 'barrierKind',
+    'zoneUse', 'zoneDensity', 'zoneEraser', 'zoneMode', 'lotSplitKind', 'lotSplitParts'], later);
+  // The brush's numbers, stepped from the keyboard ([ ] { }) or by a mode's own hardness: the sliders follow, not rebuilt.
+  deps.game.watch(['terrainRadius', 'terrainStrength', 'terrainHardness', 'roundaboutRadius'], syncRanges);
+  deps.game.watch(['congestionOverlay', 'perspective', 'quality'], () => { if (popId) fillPop(popId); });
+  syncSky();
+  syncSpeed();
+  syncHistory();
   // The Builder reports its state every frame while it is in hand
   // (`buildingsWiring.ts` refresh): the panel is rebuilt only when what it
   // shows has changed - it was rebuilt, fifty cards and all, every frame. The
   // same state handed again means its pictures arrived.
   let builderSig = '';
   const sigOf = (s: BuilderState): string => JSON.stringify([s.category, s.tool, s.armed, [...s.ready].sort().join(','), s.floor, s.snap, s.grid, s.hideOthers,
-    s.selection, s.planning, s.planPoints, s.userBlueprints.map((b) => b.key), s.pattern, s.scope, s.roof, s.material, s.drawAction]);
+    s.selection, s.planning, s.planPoints, s.userBlueprints.map((b) => b.key), s.pattern, s.scope, s.roof, s.material, s.drawAction, s.inspectorOpen]);
   workspace.subscribe((state) => {
     const same = state === builder;
     builder = state;
@@ -1834,32 +1989,29 @@ export function mountShell(deps: ShellDeps): void {
       later();
     }
   });
-  // The lane buttons are lit by the game only when a class is chosen: at the
-  // start none was lit. Choosing the class in hand again lights its count.
-  q<HTMLButtonElement>('.road-type.active')?.click();
   onLanguageChange(() => {
     impossibleShown = -1;
+    moneyShown = NaN;
+    if (status) showStatus(status);
     for (const [b, key] of [[undo, 'action.undo'], [redo, 'action.redo'], [menuB, 'builder.menu.app'], [simB, 'builder.menu.simulation'], [camB, 'camera.label'], [helpB, 'builder.help'], [layersB, 'v2.layers'],
       ...skyButtons.map((s) => [s, `sky.${s.dataset['sky'] ?? 'day'}`] as const)] as const) {
       const s = b.querySelector('span');
       if (s) s.textContent = t(key);
       b.title = t(key);
+      delete b.dataset['tip'];
     }
+    syncInside();
+    if (popId) fillPop(popId);
     later();
   });
   // A road key rebound: the tool's options name it again.
   onRoadKeysChange(() => render());
   render();
-}
-
-/** The width the road tool starts from when stepped: the selected class's own, in whole metres. */
-/** The class the road tool lays now (the active class button, `main.ts`). */
-function roadTypeIndex(): number {
-  const raw = document.querySelector<HTMLElement>('.road-type.active')?.dataset['typeIndex'];
-  return raw ? Number(raw) : 0;
-}
-
-function defaultRoadWidth(): number {
-  const raw = document.querySelector<HTMLElement>('.road-type.active')?.dataset['widthM'];
-  return raw ? Math.round(Number(raw)) : 10;
+  return {
+    openTool(next) {
+      open = true;
+      if (tool() !== next) deps.pickTool(next);
+      render();
+    },
+  };
 }

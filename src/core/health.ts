@@ -160,7 +160,6 @@ export const SYSTEM_BUDGET_MS: Readonly<Record<string, number>> = {
   'postes': 1,
   'desenho': 8,
   'sobreposição': 2,
-  'minimapa': 2,
   'painéis': 2,
 };
 

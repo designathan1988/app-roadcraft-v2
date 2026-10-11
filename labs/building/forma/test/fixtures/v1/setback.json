@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "name": "Recuo empilhado",
+  "volumes": [
+    {
+      "id": "v1-0006",
+      "name": "Base",
+      "points": [
+        [
+          -7,
+          -5
+        ],
+        [
+          7,
+          -5
+        ],
+        [
+          7,
+          5
+        ],
+        [
+          -7,
+          5
+        ]
+      ],
+      "holes": [],
+      "x": 0,
+      "z": 0,
+      "rotation": 0,
+      "base": 0,
+      "height": 9.6,
+      "floors": 3,
+      "color": "#b77b56",
+      "roof": "flat",
+      "roofColor": "#474c4e",
+      "roofHeight": 2.3,
+      "facade": "regular",
+      "windowWidth": 1.35,
+      "windowHeight": 1.8,
+      "spacing": 2.5,
+      "trim": "#383e40",
+      "balconies": false,
+      "brise": false,
+      "cornice": true,
+      "garden": false,
+      "pilotis": false,
+      "faces": {}
+    },
+    {
+      "id": "v1-0007",
+      "name": "Base · recuo",
+      "points": [
+        [
+          -5.390000000000001,
+          -3.85
+        ],
+        [
+          5.390000000000001,
+          -3.85
+        ],
+        [
+          5.390000000000001,
+          3.85
+        ],
+        [
+          -5.390000000000001,
+          3.85
+        ]
+      ],
+      "holes": [],
+      "x": 0,
+      "z": 0,
+      "rotation": 0,
+      "base": 9.78,
+      "height": 3.2,
+      "floors": 1,
+      "color": "#d8d1c1",
+      "roof": "flat",
+      "roofColor": "#474c4e",
+      "roofHeight": 2.3,
+      "facade": "regular",
+      "windowWidth": 1.35,
+      "windowHeight": 1.8,
+      "spacing": 2.5,
+      "trim": "#383e40",
+      "balconies": false,
+      "brise": false,
+      "cornice": true,
+      "garden": false,
+      "pilotis": false,
+      "faces": {}
+    }
+  ]
+}

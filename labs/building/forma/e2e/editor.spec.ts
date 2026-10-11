@@ -1,0 +1,648 @@
+// Testes de ponta a ponta no app real, com mouse e teclado de verdade.
+import { expect, test, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+const fixture = (name: string) => resolve(import.meta.dirname, '../test/fixtures/v1', name + '.json');
+
+/** Converte ponto do mundo em coordenadas de tela usando a câmera do editor. */
+async function screen(page: Page, x: number, y: number, z: number): Promise<{ x: number; y: number }> {
+  return page.evaluate(([x, y, z]) => {
+    const cam = (globalThis as any).Forma.editor.scene.camera;
+    const V = cam.position.constructor;
+    const r = document.querySelector('canvas')!.getBoundingClientRect();
+    const q = new V(x, y, z).project(cam);
+    return { x: r.left + (q.x * 0.5 + 0.5) * r.width, y: r.top + (-0.5 * q.y + 0.5) * r.height };
+  }, [x, y, z]);
+}
+
+async function dragWorld(page: Page, a: [number, number, number], b: [number, number, number]) {
+  const p = await screen(page, ...a),
+    q = await screen(page, ...b);
+  await page.mouse.move(p.x, p.y);
+  await page.mouse.down();
+  await page.mouse.move((p.x + q.x) / 2, (p.y + q.y) / 2, { steps: 4 });
+  await page.mouse.move(q.x, q.y, { steps: 4 });
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+}
+
+const project = (page: Page) => page.evaluate(() => (globalThis as any).Forma.getProject());
+const toast = (page: Page) => page.locator('#toast').textContent();
+
+async function open(page: Page, errors: string[]) {
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => {
+    if (m.type() === 'error' || m.text().includes('Multiple instances of Three.js')) errors.push(m.text());
+  });
+  await page.goto('/');
+  await page.evaluate(() => {
+    localStorage.clear();
+    localStorage.setItem('forma_onboarded', '1');
+  });
+  await page.reload();
+  await page.waitForSelector('body[data-ready="true"]');
+}
+
+/** Coloca a câmera numa vista padrão (o enquadramento depende do projeto). */
+async function view(page: Page, target: [number, number, number], distance: number) {
+  await page.evaluate(
+    ([t, d]) => {
+      const sc = (globalThis as any).Forma.editor.scene;
+      sc.target.set(...(t as number[]));
+      sc.distance = d;
+      sc.theta = 0.68;
+      sc.phi = 1.0;
+      sc.updateCamera();
+    },
+    [target, distance] as const,
+  );
+}
+
+test('abre com o exemplo, sem erros e com a interface em português', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  await expect(page.locator('#status-metric')).toHaveText('5 volumes · 1.457 m²');
+  await expect(page.locator('[data-tab="materials"]')).toBeHidden();
+  await page.locator('#ui-level').click();
+  await expect(page.locator('[data-tab="materials"]')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('desenhar, puxar altura, mover, desfazer e refazer', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  await view(page, [-30, 0, 30], 60);
+  await page.keyboard.press('b');
+  await dragWorld(page, [-38, 0, 24], [-26, 0, 32]);
+  let p = await project(page);
+  expect(p.buildings).toHaveLength(6);
+  const b = p.buildings[5];
+  expect(b.position).toEqual([-32, 28]);
+  await expect(page.locator('#status-metric')).toContainText('6 volumes');
+  // Alça de altura: 2 andares acima.
+  const top = 9.6 + 2.2;
+  const h = await screen(page, -32, top, 28);
+  const h2 = await screen(page, -32, top + 6.4, 28);
+  await page.mouse.move(h.x, h.y);
+  await page.mouse.down();
+  await page.mouse.move(h2.x, h2.y, { steps: 6 });
+  await page.mouse.up();
+  p = await project(page);
+  expect(p.buildings[5].storeys).toHaveLength(5);
+  await expect(page.locator('#floors-input')).toHaveValue('5');
+  // Mover com G.
+  await page.keyboard.press('g');
+  await dragWorld(page, [-32, 0, 28], [-28, 0, 28]);
+  p = await project(page);
+  expect(p.buildings[5].position).toEqual([-28, 28]);
+  await page.keyboard.press('Control+z');
+  expect((await project(page)).buildings[5].position).toEqual([-32, 28]);
+  await page.keyboard.press('Control+Shift+z');
+  expect((await project(page)).buildings[5].position).toEqual([-28, 28]);
+  expect(errors).toEqual([]);
+});
+
+test('recortar, espelhar e girar mantêm a parte no lugar', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  await page.locator('#ui-level').click();
+  await view(page, [-30, 0, 30], 60);
+  await page.keyboard.press('b');
+  await dragWorld(page, [-40, 0, 26], [-22, 0, 30]);
+  await page.keyboard.press('c');
+  await dragWorld(page, [-32, 0, 22], [-30, 0, 34]);
+  await expect(page.locator('#toast')).toHaveText('Volume dividido.');
+  let p = await project(page);
+  const part = p.buildings.at(-1);
+  const center = [...part.position];
+  await page.locator('#layers-toggle').click();
+  await page.locator(`[data-select="${part.id}"]`).click();
+  await page.locator('#layers-toggle').click();
+  await page.locator('#shelf-content [data-action="mirror"]').click();
+  p = await project(page);
+  expect(p.buildings.find((b: any) => b.id === part.id).position).toEqual(center);
+  await page.locator('[data-tab="details"]').click();
+  await page.locator('#shelf-content input[data-prop="rotation"]').fill('90');
+  await page.locator('#shelf-content input[data-prop="rotation"]').press('Tab');
+  p = await project(page);
+  const rotated = p.buildings.find((b: any) => b.id === part.id);
+  expect(rotated.rotation).toBe(90);
+  expect(rotated.position[0]).toBeCloseTo(center[0], 6);
+  expect(rotated.position[1]).toBeCloseTo(center[1], 6);
+  expect(errors).toEqual([]);
+});
+
+test('janela arrastada e porta por clique numa face', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  await view(page, [-30, 5, 30], 40);
+  await page.keyboard.press('b');
+  await dragWorld(page, [-38, 0, 26], [-26, 0, 32]);
+  // Face voltada para +z (z = 32), vista de frente pela câmera.
+  await page.locator('[data-mode="face"]').click();
+  await page.locator('[data-tab="facades"]').click();
+  await page.locator('#shelf-content [data-tool="window"]').click();
+  await dragWorld(page, [-34, 4, 32.2], [-32, 5.8, 32.2]);
+  await expect(page.locator('#toast')).toHaveText('Abertura desenhada na parede.');
+  await page.locator('#shelf-content [data-tool="door"]').click();
+  const d = await screen(page, -29, 8, 32.2);
+  await page.mouse.click(d.x, d.y);
+  const b = (await project(page)).buildings.at(-1);
+  const kinds = b.openings.map((o: any) => [o.fill.type, +o.width.toFixed(2), +o.height.toFixed(2), +o.sill.toFixed(3)]);
+  expect(kinds[0][0]).toBe('window');
+  expect(kinds[0][1]).toBeCloseTo(2, 0);
+  expect(kinds[1]).toEqual(['door', 1.35, 2.4, 0.015]);
+  expect(errors).toEqual([]);
+});
+
+test('importar v1, exportar GLB instanciado e reabrir com GLTFLoader', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  await page.locator('#file-input').setInputFiles(fixture('openings'));
+  await expect(page.locator('#toast')).toHaveText('Projeto aberto.');
+  const p = await project(page);
+  expect(p.schema).toBe('forma/2');
+  expect(p.buildings[0].openings).toHaveLength(3);
+  const root = resolve(import.meta.dirname, '..').split('\\').join('/');
+  const result = await page.evaluate(async (root) => {
+    const buf: ArrayBuffer = await (globalThis as any).Forma.editor.exportGLB();
+    const mod = await import(/* @vite-ignore */ '/@fs/' + root + '/node_modules/three/examples/jsm/loaders/GLTFLoader.js');
+    const gltf: any = await new Promise((res, rej) => new mod.GLTFLoader().parse(buf, '', res, rej));
+    let instanced = 0;
+    gltf.scene.traverse((o: any) => o.isInstancedMesh && instanced++);
+    const dv = new DataView(buf);
+    const json = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, dv.getUint32(12, true))));
+    return { instanced, ext: json.extensionsUsed };
+  }, root);
+  expect(result.ext).toContain('EXT_mesh_gpu_instancing');
+  expect(result.instanced).toBeGreaterThan(0);
+  expect(errors).toEqual([]);
+});
+
+test('salvamento: recarregar mantém o projeto e migra o salvamento v1', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  await page.locator('#project-name').fill('Meu Teste Ç');
+  await page.locator('#project-name').press('Tab');
+  await page.reload();
+  await page.waitForSelector('body[data-ready="true"]');
+  await expect(page.locator('#project-name')).toHaveValue('Meu Teste Ç');
+  const v1 = readFileSync(fixture('courtyard'), 'utf8');
+  await page.evaluate((j) => {
+    localStorage.removeItem('forma_project_v2');
+    localStorage.setItem('forma_project_v1', j);
+  }, v1);
+  await page.reload();
+  await page.waitForSelector('body[data-ready="true"]');
+  const p = await project(page);
+  expect(p.name).toBe('Pátio e U');
+  expect(p.buildings[1].masses[0].holes).toHaveLength(1);
+  expect(await page.evaluate(() => !!localStorage.getItem('forma_project_v1'))).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('mapa vazio pode ser desfeito com Ctrl+Z', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  await page.locator('#new').click();
+  await page.locator('[data-modal="empty"]').click();
+  await expect(page.locator('#status-metric')).toHaveText('0 volumes · 0 m²');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Control+z');
+  await expect(page.locator('#status-metric')).toHaveText('5 volumes · 1.457 m²');
+  expect(errors).toEqual([]);
+});
+
+test('incorporado numa cena three.js externa, sem cópia duplicada do three', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => {
+    if (m.type() === 'error' || m.text().includes('Multiple instances of Three.js')) errors.push(m.text());
+  });
+  await page.goto('/host-scene.html');
+  await page.waitForSelector('body[data-ready="true"]');
+  const names = await page.evaluate(() => (globalThis as any).hostDemo.scene.children.map((c: any) => c.name || c.type));
+  expect(names).toContain('FORMA-editor');
+  await page.getByRole('button', { name: 'Gerar prédio pronto' }).click();
+  await expect(page.locator('#log')).toHaveText('Prédio gerado (1).');
+  expect(errors).toEqual([]);
+});
+
+test('base livre por cliques e vértice pego a 6 px da alça', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  await view(page, [-30, 0, 30], 60);
+  await page.keyboard.press('p');
+  for (const [x, z] of [[-40, 20], [-28, 20], [-28, 30], [-36, 34], [-40, 20]] as const) {
+    const s = await screen(page, x, 0, z);
+    await page.mouse.click(s.x, s.y);
+  }
+  let p = await project(page);
+  expect(p.buildings).toHaveLength(6);
+  const b = p.buildings[5];
+  expect(b.masses[0].outer.vertices).toHaveLength(4);
+  await page.locator('#shelf-content [data-tool="editpoints"]').click();
+  // Vértice em (-36, 34) no mundo; o clique começa 6 px ao lado da alça.
+  const v = await screen(page, -36, 0.1, 34);
+  const to = await screen(page, -39, 0.1, 37);
+  await page.mouse.move(v.x + 6, v.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 6 });
+  await page.mouse.up();
+  p = await project(page);
+  const moved = p.buildings[5];
+  const world = moved.masses[0].outer.vertices.map((x: any) => [x.p[0] + moved.position[0], x.p[1] + moved.position[1]]);
+  expect(world).toContainEqual([-39, 37]);
+  expect(errors).toEqual([]);
+});
+
+test('lote: desenhar, preencher, bloquear e avisar', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  await page.locator('#new').click();
+  await page.locator('[data-modal="empty"]').click();
+  await page.keyboard.press('Escape');
+  await view(page, [0, 0, 0], 50);
+  await page.keyboard.press('l');
+  await dragWorld(page, [-7, 0, -12], [8, 0, 17]);
+  await expect(page.locator('[data-tab="lot"]')).toHaveClass(/active/);
+  let p = await project(page);
+  expect(p.lots).toHaveLength(1);
+  await expect(page.locator('#inspector .index-row').first()).toContainText('435 m²');
+  await page.locator('#shelf-content [data-lotaction="fill"]').click();
+  await expect(page.locator('#toast')).toHaveText('Lote preenchido dentro das regras.');
+  p = await project(page);
+  expect(p.buildings[0].lotId).toBe(p.lots[0].id);
+  // Seleciona o lote clicando no recuo frontal e liga o bloqueio.
+  const front = await screen(page, 0.5, 0, 15.5);
+  await page.mouse.click(front.x, front.y);
+  await page.locator('[data-lotmode="block"]').click();
+  await page.locator('#layers-toggle').click();
+  await page.locator(`[data-select="${p.buildings[0].id}"]`).click();
+  await page.locator('#layers-toggle').click();
+  await page.locator('#floors-input').fill('8');
+  await page.locator('#floors-input').press('Tab');
+  await expect(page.locator('#toast')).toContainText('Bloqueado pelo lote');
+  expect((await project(page)).buildings[0].storeys).toHaveLength(4);
+  // Modo avisar: aceita e marca a violação.
+  await page.mouse.click(front.x, front.y);
+  await page.locator('[data-lotmode="warn"]').click();
+  await page.locator('#layers-toggle').click();
+  await page.locator(`[data-select="${p.buildings[0].id}"]`).click();
+  await page.locator('#layers-toggle').click();
+  await page.locator('#floors-input').fill('8');
+  await page.locator('#floors-input').press('Tab');
+  expect((await project(page)).buildings[0].storeys).toHaveLength(8);
+  await page.mouse.click(front.x, front.y);
+  await expect(page.locator('#inspector .index-bad')).toContainText('Coeficiente de aproveitamento');
+  expect(errors).toEqual([]);
+});
+
+test('interiores: pavimento, paredes, cômodos, porta, escada e caminhar', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  await page.locator('#new').click();
+  await page.locator('[data-modal="empty"]').click();
+  await page.keyboard.press('Escape');
+  await page.locator('[data-tab="volumes"]').click();
+  for (const [p, v] of [['width', '12'], ['depth', '8'], ['floors', '2']] as const) {
+    await page.locator(`#shelf-content input[data-prop="${p}"]`).fill(v);
+    await page.locator(`#shelf-content input[data-prop="${p}"]`).press('Tab');
+  }
+  await view(page, [0, 0, 0], 30);
+  await page.keyboard.press('b');
+  const c = await screen(page, 0, 0, 0);
+  await page.mouse.click(c.x, c.y);
+  let p = await project(page);
+  const b = p.buildings[0];
+  await page.locator(`[data-storey="${b.storeys[0].id}"]`).click();
+  await expect(page.locator('[data-tab="interior"]')).toHaveClass(/active/);
+  await page.locator('[data-interior="plan"]').click();
+  await page.locator('#shelf-content [data-tool="wall"]').click();
+  for (const [x, z] of [[0, -4], [0, 4]] as const) {
+    const s = await screen(page, x, 0.16, z);
+    await page.mouse.click(s.x, s.y);
+  }
+  await page.keyboard.press('Enter');
+  p = await project(page);
+  expect(p.buildings[0].storeys[0].rooms.map((r: any) => Math.round(r.area)).sort()).toEqual([48, 48]);
+  await expect(page.locator('.room-label')).toHaveCount(2);
+  // Porta: clique sobre a parede (vista de cima, o topo dela).
+  await page.locator('#shelf-content [data-tool="idoor"]').click();
+  const d = await screen(page, 0, 3.15, 1);
+  await page.mouse.click(d.x, d.y);
+  await expect(page.locator('#toast')).toHaveText('Porta interna criada.');
+  // Escada de dois pontos.
+  await page.locator('#shelf-content [data-tool="stair"]').click();
+  for (const [x, z] of [[2, -3], [5, -3]] as const) {
+    const s = await screen(page, x, 0.16, z);
+    await page.mouse.click(s.x, s.y);
+  }
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#toast')).toContainText('Escada criada');
+  p = await project(page);
+  expect(p.buildings[0].stairs).toHaveLength(1);
+  // Caminhar: entra, anda e sai com Esc.
+  await page.locator('#shelf-content [data-interior="walk"]').click();
+  await expect(page.locator('#walk-hint')).toBeVisible();
+  const moved = await page.evaluate(() => {
+    const w = (globalThis as any).Forma.editor.walk;
+    const a = w.position.p;
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', bubbles: true }));
+    for (let i = 0; i < 20; i++) w.update(0.05);
+    document.dispatchEvent(new KeyboardEvent('keyup', { key: 'w', bubbles: true }));
+    const q = w.position.p;
+    return Math.hypot(q[0] - a[0], q[1] - a[1]);
+  });
+  expect(moved).toBeGreaterThan(0.5);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#walk-hint')).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+test('coberturas pelo esqueleto: quatro águas, duas águas com empena, mansarda, beiral', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  await page.locator('#new').click();
+  await page.locator('[data-modal="empty"]').click();
+  await page.keyboard.press('Escape');
+  await page.locator('[data-tab="volumes"]').click();
+  await page.locator('#shelf-content [data-shape="l"]').click();
+  await view(page, [0, 0, 0], 40);
+  const c = await screen(page, 0, 0, 0);
+  await page.mouse.click(c.x, c.y);
+  const parts = () =>
+    page.evaluate(() => {
+      const ed = (globalThis as any).Forma.editor;
+      const b = ed.getProject().buildings[0];
+      const out: Record<string, number> = {};
+      ed.scene.built.get(b.id).group.traverse((o: any) => {
+        if (o.isMesh && !o.isInstancedMesh) out[o.userData.part] = (out[o.userData.part] ?? 0) + o.geometry.attributes.position.count;
+      });
+      return out;
+    });
+  await page.locator('#inspector [data-roof="hip"]').click();
+  expect((await project(page)).buildings[0].masses[0].roof.kind).toBe('hip');
+  expect((await parts()).roof).toBeGreaterThan(0);
+  expect((await parts()).gable).toBeUndefined();
+  await page.locator('#inspector [data-roof="gable"]').click();
+  expect((await parts()).gable).toBe(6); // duas empenas (pontas das alas do L)
+  await page.locator('#inspector [data-roof="mansard"]').click();
+  expect((await parts()).roof).toBeGreaterThan(0);
+  // Beiral e direção no modo avançado.
+  await page.locator('#inspector [data-roof="gable"]').click();
+  await page.locator('#ui-level').click();
+  await page.locator('[data-tab="roofs"]').click();
+  await page.locator('#shelf-content input[data-prop="roofOverhang"]').fill('1');
+  await page.locator('#shelf-content input[data-prop="roofOverhang"]').press('Tab');
+  await page.locator('#shelf-content select[data-prop="roofDirection"]').selectOption('90');
+  const roof = (await project(page)).buildings[0].masses[0].roof;
+  expect(roof.overhang).toBe(1);
+  expect(roof.direction).toBe(90);
+  await page.locator('#undo').click();
+  expect((await project(page)).buildings[0].masses[0].roof.direction).toBeUndefined();
+  expect(errors).toEqual([]);
+});
+
+test('estilos: aplicar pela aba, próximos volumes, importar com módulo glTF, exportar e desfazer', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  const target = await page.evaluate(() => (globalThis as any).Forma.getProject().buildings.find((b: any) => b.name === 'Ala norte').id);
+  await page.evaluate((id) => (globalThis as any).Forma.editor.selectIds([id]), target);
+  await page.locator('[data-tab="styles"]').click();
+  await expect(page.locator('.style-card')).toHaveCount(7);
+  await page.locator('.style-card[data-style="builtin:colonial"]').click();
+  await expect(page.locator('#toast')).toHaveText('Estilo Colonial brasileiro aplicado.');
+  let b = (await project(page)).buildings.find((x: any) => x.id === target);
+  expect(b.styleRef).toBe('builtin:colonial');
+  expect(b.masses[0].roof.kind).toBe('hip');
+  await page.locator('#undo').click();
+  b = (await project(page)).buildings.find((x: any) => x.id === target);
+  expect(b.styleRef).toBeUndefined();
+  // Sem seleção: estilo dos próximos volumes.
+  await page.evaluate(() => (globalThis as any).Forma.editor.selectIds([]));
+  await page.locator('.style-card[data-style="builtin:industrial"]').click();
+  await expect(page.locator('#toast')).toHaveText('Próximos volumes no estilo Galpão industrial.');
+  await page.locator('[data-tab="volumes"]').click();
+  await view(page, [40, 0, 40], 40);
+  await page.keyboard.press('b');
+  const c = await screen(page, 40, 0, 40);
+  await page.mouse.click(c.x, c.y);
+  const p = await project(page);
+  expect(p.buildings.at(-1).styleRef).toBe('builtin:industrial');
+  // Importar estilo próprio com módulo glTF (data URI) e aplicar ao novo volume.
+  await page.locator('[data-tab="styles"]').click();
+  await page.locator('#style-input').setInputFiles(fixture('../styles/ornamentado'));
+  await expect(page.locator('#toast')).toHaveText('Estilo Ornamentado (módulos) importado.');
+  await expect(page.locator('.style-card')).toHaveCount(8);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const ed = (globalThis as any).Forma.editor;
+        const nb = ed.getProject().buildings.at(-1);
+        let n = 0;
+        ed.scene.built.get(nb.id).group.traverse((o: any) => {
+          if (o.userData.module && !o.userData.placeholder) n += o.count;
+        });
+        return n;
+      }),
+    )
+    .toBeGreaterThan(0);
+  // Estilo inválido: mensagem clara, nada muda.
+  await page.locator('#style-input').setInputFiles({ name: 'ruim.json', mimeType: 'application/json', buffer: Buffer.from('{"schema":"forma-style/1","id":"x","name":"X","materials":{"wall":{"color":"azul"}}}') });
+  await expect(page.locator('#toast')).toContainText('Não foi possível importar o estilo');
+  // Exportar o estilo do volume selecionado.
+  await page.locator('#ui-level').click();
+  await page.locator('[data-tab="styles"]').click();
+  const dl = page.waitForEvent('download');
+  await page.locator('[data-action="style-export"]').click();
+  expect((await dl).suggestedFilename()).toBe('meu-ornamentado.json');
+  // O projeto salvo com estilo próprio reabre válido.
+  await page.reload();
+  await page.waitForSelector('body[data-ready="true"]');
+  expect((await project(page)).styles.map((s: any) => s.id)).toEqual(['meu:ornamentado']);
+  expect(errors).toEqual([]);
+});
+
+test('facilidade: tutorial, modelo pronto, medidas digitadas, conta-gotas e atalhos', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('/');
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.waitForSelector('body[data-ready="true"]');
+  // Primeira visita: tutorial de 4 passos; Esc encerra e não volta.
+  await expect(page.locator('#coach')).toContainText('1 de 4');
+  await page.locator('[data-coach="next"]').click();
+  await expect(page.locator('#coach')).toContainText('Puxe e meça');
+  await expect(page.locator('#measure-box')).toHaveClass(/coach-target/);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#coach')).not.toHaveClass(/show/);
+  await page.reload();
+  await page.waitForSelector('body[data-ready="true"]');
+  await expect(page.locator('#coach')).not.toHaveClass(/show/);
+  // Modelo pronto: clique no botão e no chão.
+  await page.locator('#new').click();
+  await page.locator('[data-modal="empty"]').click();
+  await page.keyboard.press('Escape');
+  await page.locator('[data-tab="volumes"]').click();
+  await page.locator('[data-template="sobrado"]').click();
+  await expect(page.locator('#hint')).toContainText('Clique no chão para colocar: Sobrado');
+  await view(page, [0, 0, 0], 40);
+  const c = await screen(page, 0, 0, 0);
+  await page.mouse.click(c.x, c.y);
+  let p = await project(page);
+  expect(p.buildings).toHaveLength(1);
+  expect(p.buildings[0].stairs).toHaveLength(1);
+  await expect(page.locator('#measure-box')).toContainText('Dimensões (L;P)8;10');
+  // Medidas digitadas logo depois: largura;profundidade (vírgula é decimal).
+  await page.keyboard.type('9,5;12');
+  await expect(page.locator('#measure-box')).toContainText('9,5;12 ⏎');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#toast')).toHaveText('Base de 9,5 × 12 m.');
+  // Altura: puxar a alça e digitar o valor.
+  const b = (await project(page)).buildings[0];
+  const top = await screen(page, b.position[0], 6, b.position[1]);
+  await page.locator('#shelf-content').hover();
+  await page.mouse.move(top.x, top.y - 2);
+  const handle = await page.evaluate(() => {
+    const sc = (globalThis as any).Forma.editor.scene;
+    const h = sc.gizmos.children.find((o: any) => o.userData?.handle && o.userData.kind === 'height');
+    const v = h.position.clone().project(sc.camera);
+    const r = document.querySelector('canvas')!.getBoundingClientRect();
+    return { x: r.left + (v.x * 0.5 + 0.5) * r.width, y: r.top + (-0.5 * v.y + 0.5) * r.height };
+  });
+  await page.mouse.move(handle.x, handle.y);
+  await page.mouse.down();
+  await page.mouse.move(handle.x, handle.y - 30, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.locator('#measure-box')).toContainText('Altura');
+  await page.keyboard.type('7');
+  await page.keyboard.press('Enter');
+  p = await project(page);
+  expect(p.buildings[0].storeys.reduce((m: number, s: any) => Math.max(m, s.elevation + s.height), 0)).toBeCloseTo(7, 2);
+  // Medida inválida: aviso claro, nada muda.
+  await page.keyboard.type('1.2.3');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#toast')).toContainText('Medida inválida');
+  // Conta-gotas: copia de um volume e aplica em outro.
+  await page.keyboard.press('Escape');
+  await page.locator('[data-template="galpao"]').click();
+  const g = await screen(page, 18, 0, 0);
+  await page.mouse.click(g.x, g.y);
+  p = await project(page);
+  expect(p.buildings.map((x: any) => x.styleRef)).toEqual(['builtin:colonial', 'builtin:industrial']);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('i');
+  await expect(page.locator('[data-tool="eyedrop"]').first()).toHaveClass(/active/);
+  const s0 = await screen(page, 18, 7, 0);
+  await page.mouse.click(s0.x, s0.y);
+  await expect(page.locator('#toast')).toContainText('copiado');
+  const s1 = await screen(page, 0, 2, 6);
+  await page.mouse.click(s1.x, s1.y);
+  await expect(page.locator('#toast')).toContainText('Visual aplicado');
+  p = await project(page);
+  expect(p.buildings[0].styleRef).toBe('builtin:industrial');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-tool="select"]').first()).toHaveClass(/active/);
+  // Ajuda lista os atalhos e abre o tutorial de novo.
+  await page.keyboard.press('?');
+  await expect(page.locator('#modal')).toContainText('conta-gotas');
+  await page.locator('#modal [data-action="tutorial"]').click();
+  await expect(page.locator('#coach')).toHaveClass(/show/);
+  expect(errors).toEqual([]);
+});
+
+test.describe('toque', () => {
+  test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
+  test('tocar seleciona um volume e o alvo das alças é maior no toque', async ({ page }) => {
+    const errors: string[] = [];
+    await open(page, errors);
+    const target = await page.evaluate(() => (globalThis as any).Forma.getProject().buildings.find((b: any) => b.name === 'Torre curva'));
+    await page.evaluate(() => (globalThis as any).Forma.editor.selectIds([]));
+    await view(page, [target.position[0], 0, target.position[1]], 30);
+    const c = await screen(page, target.position[0], 4, target.position[1]);
+    await page.touchscreen.tap(c.x, c.y);
+    await expect.poll(async () => (await page.evaluate(() => (globalThis as any).Forma.getSelection())).ids ?? (await page.evaluate(() => (globalThis as any).Forma.getSelection()))).toContain(target.id);
+    // Alça de altura pega a 20 px (o mouse precisaria de 12 px).
+    const px = await page.evaluate(() => {
+      const sc = (globalThis as any).Forma.editor.scene;
+      const h = sc.gizmos.children.find((o: any) => o.userData?.handle && o.userData.kind === 'height');
+      const v = h.position.clone().project(sc.camera);
+      const r = document.querySelector('canvas')!.getBoundingClientRect();
+      const x = r.left + (v.x * 0.5 + 0.5) * r.width + 20,
+        y = r.top + (-0.5 * v.y + 0.5) * r.height;
+      return [sc.pickHandle({ clientX: x, clientY: y })?.kind ?? null, sc.pickHandle({ clientX: x, clientY: y }, 24)?.kind ?? null];
+    });
+    expect(px).toEqual([null, 'height']);
+    expect(errors).toEqual([]);
+  });
+});
+
+test('desempenho: orçamento de draw calls e triângulos com LOD e geração num worker', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  const stats = () =>
+    page.evaluate(() => {
+      const sc = (globalThis as any).Forma.editor.scene;
+      sc.renderNow();
+      const i = sc.renderer.info.render;
+      return { calls: i.calls as number, triangles: i.triangles as number };
+    });
+  // Exemplo na vista inicial: detalhe completo, dentro do orçamento.
+  await page.evaluate(() => (globalThis as any).Forma.editor.scene.fitView());
+  const ex = await stats();
+  expect(ex.calls).toBeLessThan(200);
+  expect(ex.triangles).toBeLessThan(80_000);
+  // 120 volumes: na vista inteira entram os níveis simplificados.
+  const stress = JSON.parse(readFileSync(fixture('stress-120'), 'utf8'));
+  await page.evaluate((p) => {
+    const ed = (globalThis as any).Forma.editor;
+    ed.load(p);
+    ed.selectIds([]);
+    ed.scene.fitView();
+  }, stress);
+  const near = await stats();
+  expect(near.calls).toBeLessThan(400);
+  expect(near.triangles).toBeLessThan(60_000);
+  await page.evaluate(() => {
+    const sc = (globalThis as any).Forma.editor.scene;
+    sc.distance = 230; // máximo da câmera do editor
+    sc.phi = 0.6;
+    sc.updateCamera();
+  });
+  const far = await stats();
+  expect(far.calls).toBeLessThanOrEqual(near.calls);
+  expect(far.triangles).toBeLessThanOrEqual(near.triangles);
+  // Sem LOD, o mesmo projeto passaria do orçamento (prova de que o LOD atua).
+  const full = await page.evaluate(() => {
+    const ed = (globalThis as any).Forma.editor;
+    ed.scene.lodEnabled = false;
+    ed.scene.rebuild(ed.getProject().buildings);
+    ed.scene.fitView();
+    ed.scene.renderNow();
+    const i = ed.scene.renderer.info.render;
+    ed.scene.lodEnabled = true;
+    ed.scene.rebuild(ed.getProject().buildings);
+    return { calls: i.calls, triangles: i.triangles };
+  });
+  expect(full.calls).toBeGreaterThan(near.calls * 3);
+  // Worker embutido: as peças saem de outra thread, iguais às da thread principal.
+  const root = resolve(import.meta.dirname, '..').split('\\').join('/');
+  const w = await page.evaluate(async (root) => {
+    const m = await import(/* @vite-ignore */ `/@fs/${root}/src/render/worker-client.ts`);
+    const parts = await import(/* @vite-ignore */ `/@fs/${root}/src/geometry/mass-parts.ts`);
+    const ed = (globalThis as any).Forma.editor;
+    const bs = ed.getProject().buildings.slice(0, 20);
+    const g = await m.createPartsGenerator();
+    const t0 = performance.now();
+    const out = await g.generate(bs);
+    const ms = performance.now() - t0;
+    g.dispose();
+    const local = bs.map((b: any) => parts.buildBuildingParts(b));
+    return { threaded: g.threaded, n: out.length, same: JSON.stringify(out) === JSON.stringify(local), ms };
+  }, root);
+  expect(w).toMatchObject({ threaded: true, n: 20, same: true });
+  expect(errors).toEqual([]);
+});

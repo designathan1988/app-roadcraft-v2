@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "name": "Detalhes",
+  "volumes": [
+    {
+      "id": "v1-0017",
+      "name": "Tudo ligado",
+      "points": [
+        [
+          -6,
+          -4.5
+        ],
+        [
+          6,
+          -4.5
+        ],
+        [
+          6,
+          4.5
+        ],
+        [
+          -6,
+          4.5
+        ]
+      ],
+      "holes": [],
+      "x": 0,
+      "z": 0,
+      "rotation": 30,
+      "base": 0,
+      "height": 12.8,
+      "floors": 4,
+      "color": "#b77b56",
+      "roof": "flat",
+      "roofColor": "#474c4e",
+      "roofHeight": 2.3,
+      "facade": "regular",
+      "windowWidth": 1.35,
+      "windowHeight": 1.8,
+      "spacing": 2.5,
+      "trim": "#383e40",
+      "balconies": true,
+      "brise": true,
+      "cornice": true,
+      "garden": true,
+      "pilotis": true,
+      "faces": {}
+    },
+    {
+      "id": "v1-0018",
+      "name": "Sem cornija",
+      "points": [
+        [
+          -6,
+          -4.5
+        ],
+        [
+          6,
+          -4.5
+        ],
+        [
+          6,
+          -0.7200000000000002
+        ],
+        [
+          -0.96,
+          -0.7200000000000002
+        ],
+        [
+          -0.96,
+          4.5
+        ],
+        [
+          -6,
+          4.5
+        ]
+      ],
+      "holes": [],
+      "x": 18,
+      "z": 0,
+      "rotation": -45,
+      "base": 0,
+      "height": 6.4,
+      "floors": 2,
+      "color": "#b77b56",
+      "roof": "flat",
+      "roofColor": "#474c4e",
+      "roofHeight": 2.3,
+      "facade": "regular",
+      "windowWidth": 1.35,
+      "windowHeight": 1.8,
+      "spacing": 2.5,
+      "trim": "#383e40",
+      "balconies": false,
+      "brise": false,
+      "cornice": false,
+      "garden": false,
+      "pilotis": false,
+      "faces": {}
+    }
+  ]
+}

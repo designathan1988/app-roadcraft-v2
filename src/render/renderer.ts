@@ -3156,16 +3156,12 @@ export function createSceneRenderer(
       // Building the city, the map stands on a plain dark blue: no sky and no
       // land past its edge; in play, the sky and the land round it (the player,
       // 2026-10-06).
-      // The orbit camera brought down to the street sees the horizon too
-      // (`view/cameraProfile.ts`): the sky and the land round the map then,
-      // as in play. The switch happens only with the horizon in the frame
-      // (tilt under half the lens plus a margin), where the plain blue would
-      // show; higher up neither is seen, so it never shows as a change.
+      // The orbit camera brought down low keeps the building view: the map a
+      // block of land on the plain blue, its cut sides showing. The land and
+      // sky it opened round the map there read as a card on a green plain
+      // (the player, 2026-10-10: remove that green background).
       {
-        const fov = rig.camera instanceof PerspectiveCamera ? rig.camera.fov : 0;
-        const open = rig.chasing || (rig.perspective && rig.viewport.elevation < ((fov / 2 + 4) * Math.PI) / 180);
-        // On the planet there is no map edge to hide: round the ground is the
-        // sky, and further out space (`planet/space.ts` fades the sky dome).
+        const open = rig.chasing;
         const sky = scene.getObjectByName('sky');
         if (sky && !__PLANET__) sky.visible = open;
         for (const mesh of terrain.meshes) if (mesh.name === 'terrain-backdrop') mesh.visible = open;

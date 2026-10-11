@@ -194,8 +194,18 @@ const MEDIAN_NOSE_GAP = m(0.5);
  */
 export function medianNose(net: Network, segment: SegmentId, node: NodeId): number {
   const crossing = net.crosswalkDistanceAt(segment, node);
-  return crossing > 0 ? crossing + CROSSWALK_DEPTH / 2 + MEDIAN_NOSE_GAP : 0;
+  const behindCrossing = crossing > 0 ? crossing + CROSSWALK_DEPTH / 2 + MEDIAN_NOSE_GAP : 0;
+  // A U-turn's opening (docs/VIAS.md V8, retorno): the half circle reaches its
+  // radius past the node, on the road beyond the one it serves, and the body
+  // half its length further (`medianUturnPath`); on the road it serves only a
+  // nose's gap, its turners waiting beside the island.
+  const at = net.doc.node(node);
+  if (at?.uturn === undefined || at.incident.length !== 2) return behindCrossing;
+  return Math.max(behindCrossing, segment === at.uturn ? MEDIAN_NOSE_GAP * 3 : MEDIAN_UTURN_OPENING);
 }
+
+/** How far each side of a U-turn's node its median opening runs: a car's half circle and half its length. */
+export const MEDIAN_UTURN_OPENING = m(10);
 
 /** The planted median under a point (within `reach` of its band), or null. */
 export function medianAt(net: Network, at0: Vec2, reach = 0): MedianHit | null {

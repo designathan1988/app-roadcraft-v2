@@ -1,0 +1,253 @@
+/* Complementos do editor FORMA 2 (o CSS portado do legado está em legacy.css). */
+.forma-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+  overflow: hidden;
+  container: forma / inline-size;
+}
+.forma-app {
+  position: absolute;
+  inset: 0;
+}
+
+/* Modo simples: esconde os controles avançados. */
+.forma-app[data-level='simple'] [data-advanced] {
+  display: none !important;
+}
+.forma-app .level-toggle[aria-pressed='true'] {
+  color: var(--accent);
+  border-color: #f09b5655;
+  background: #f09b5610;
+}
+.forma-app .level-toggle span {
+  white-space: nowrap;
+}
+@container forma (max-width: 760px) {
+  .forma-app .level-toggle span {
+    display: none;
+  }
+}
+
+/* Lotes e índices. */
+.forma-app .index-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(150px, auto));
+  gap: 4px 18px;
+}
+.forma-app .index-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.forma-app .index-row b {
+  color: var(--text);
+  font-weight: 500;
+}
+.forma-app .index-row small {
+  color: var(--muted);
+  font-weight: 400;
+}
+.forma-app .index-row.bad b {
+  color: #f08a7c;
+}
+.forma-app .lot-body {
+  display: grid;
+  gap: 6px;
+}
+.forma-app .index-ok {
+  color: #8fc58a;
+  font-size: 11px;
+}
+.forma-app .index-bad {
+  margin: 0;
+  padding-left: 16px;
+  color: #f08a7c;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.forma-app .field-row select {
+  margin-left: 6px;
+}
+
+/* Modo hospedado (sem interface): o canvas é do jogo. */
+.forma-app[data-ui='none'] > :not(#viewport) {
+  display: none !important;
+}
+
+/* Barra de pavimentos e interiores. */
+.forma-app #storey-bar {
+  position: absolute;
+  left: 22px;
+  top: 64px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px;
+  background: #25292cd4;
+  border: 1px solid #626970;
+  border-radius: 5px;
+  max-height: calc(100% - 150px);
+  overflow-y: auto;
+}
+.forma-app #storey-bar:empty {
+  display: none;
+}
+.forma-app .storey-btn {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
+  justify-content: flex-start;
+  white-space: nowrap;
+}
+.forma-app #room-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+.forma-app .room-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background: #1a2025d9;
+  color: #eceeed;
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 11px;
+  white-space: nowrap;
+  text-align: center;
+  line-height: 1.35;
+}
+.forma-app .room-label small {
+  display: block;
+  color: #b9c1c5;
+  font-size: 10px;
+}
+.forma-app .room-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(150px, auto));
+  gap: 4px 12px;
+}
+.forma-app .room-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.forma-app .room-row input {
+  width: 110px;
+}
+.forma-app .room-row small {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.forma-app .inspector-heading {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+}
+.forma-app .inspector-body .row b {
+  font-weight: 500;
+}
+.forma-app #walk-hint {
+  position: absolute;
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  z-index: 6;
+  background: #1a2025e6;
+  color: #eceeed;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 12px;
+  display: none;
+}
+.forma-app #walk-crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: #ffffffcc;
+  z-index: 6;
+  display: none;
+  pointer-events: none;
+}
+
+.forma-app .field-row input[data-storeyprop="name"] {
+  width: 140px;
+}
+
+/* Coberturas no inspetor: grade de 3 colunas, nome sob o ícone. */
+.forma-app .roof-mini{display:grid;grid-template-columns:repeat(3,1fr);gap:7px 6px}
+.forma-app .roof-pick{display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0}
+.forma-app .roof-mini .roof-pick button{width:100%;height:34px}
+.forma-app .roof-pick span{font-size:9px;line-height:1.15;color:var(--muted);text-align:center}
+/* Inspetor nunca passa da área 3D: rola quando a janela é baixa. */
+.forma-app #inspector{max-height:calc(100% - 30px);overflow-y:auto;scrollbar-width:thin}
+.forma-app #inspector .swatches{flex-wrap:nowrap;justify-content:space-between;gap:4px}
+.forma-app #inspector .swatches .swatch{flex:0 1 29px;min-width:24px;aspect-ratio:1}
+/* Cabeçalho médio (761–1100 px): botões de arquivo só com ícone, nome do projeto visível. */
+@container forma (max-width:1100px){
+.forma-app header{gap:8px}
+.forma-app header .header-button:not(.level-toggle) span{display:none}
+.forma-app header .header-button:not(.level-toggle){padding:7px}
+.forma-app #project-name{width:150px;min-width:90px;flex:0 1 150px}
+}
+@container forma (max-width:1100px){
+.forma-app .shelf-actions button{font-size:0;gap:0;padding:6px}
+.forma-app .shelf-actions button svg{width:16px;height:16px}
+}
+/* Barra de ferramentas rola em janelas baixas, sem esconder iluminação e ajuda. */
+.forma-app .rail{overflow-y:auto;scrollbar-width:none}
+.forma-app .rail>*{flex-shrink:0}
+
+/* Aba Estilos: cartões com as cores do estilo. */
+.forma-app .style-grid{display:flex;gap:8px}
+.forma-app .style-card{display:flex;flex-direction:column;align-items:flex-start;justify-content:space-between;gap:8px;width:118px;height:68px;padding:8px 9px;border:1px solid var(--line);border-radius:6px;background:#1d2225;text-align:left;flex-shrink:0}
+.forma-app .style-card:hover{border-color:#5a6266}
+.forma-app .style-card.active{border-color:var(--accent,#e8894a);box-shadow:inset 0 0 0 1px var(--accent,#e8894a)}
+.forma-app .style-chips{display:flex;gap:4px}
+.forma-app .style-chips i{width:16px;height:16px;border-radius:50%;border:1px solid #0006;display:block}
+.forma-app .style-name{font-size:11px;line-height:1.2;color:#dfe3e4;white-space:normal}
+@container forma (max-width:420px){
+.forma-app header{gap:3px;padding:0 6px}
+.forma-app .brand{letter-spacing:3px;font-size:15px}
+}
+@container forma (max-width:760px){
+.forma-app .roof-mini{gap:4px 5px}
+.forma-app .roof-mini .roof-pick button{height:27px}
+.forma-app .roof-mini svg{width:20px;height:20px}
+.forma-app .roof-pick{gap:2px}
+.forma-app .inspector-foot{padding:3px 9px}
+}
+
+/* Caixa de medidas (barra de status). */
+.forma-app .measure-box{display:inline-flex;align-items:center;gap:6px;margin-left:auto;margin-right:14px;padding:2px 8px;border:1px solid var(--line);border-radius:4px;color:var(--muted);font-size:10px;min-width:150px}
+.forma-app .measure-box .measure-value{color:var(--text);font-variant-numeric:tabular-nums;font-weight:600}
+.forma-app .measure-box.active{border-color:#f09b5677}
+.forma-app .measure-box.typing{border-color:var(--accent);background:#f09b5614}
+.forma-app .measure-box.typing .measure-value{color:var(--accent)}
+@container forma (max-width:760px){.forma-app .measure-box{min-width:0;margin-right:6px}.forma-app .measure-box .measure-label{display:none}.forma-app .measure-box:not(.active){display:none}}
+
+/* Tutorial inicial. */
+.forma-app #coach{position:absolute;left:50%;bottom:calc(var(--shelf) + 70px);transform:translateX(-50%);width:min(380px,calc(100% - 32px));background:#1b2124f7;border:1px solid var(--accent);border-radius:8px;padding:14px 16px 12px;box-shadow:0 10px 30px #0006;z-index:60;display:none}
+.forma-app #coach.show{display:block}
+.forma-app #coach h3{margin:2px 0 6px;font-size:14px}
+.forma-app #coach p{margin:0 0 12px;color:#cfd5d7;line-height:1.45;font-size:12px}
+.forma-app .coach-step{font-size:10px;color:var(--accent);letter-spacing:.04em}
+.forma-app .coach-actions{display:flex;justify-content:flex-end;gap:8px}
+.forma-app .coach-actions button{padding:6px 12px;border-radius:5px}
+.forma-app .coach-actions .primary{background:var(--accent);color:#1b1b1b;border-color:var(--accent)}
+.forma-app .coach-target{outline:2px solid var(--accent)!important;outline-offset:2px;border-radius:5px;animation:forma-pulse 1.4s ease-in-out infinite}
+@keyframes forma-pulse{50%{outline-color:#f09b5644}}
+.forma-app .measure-box + .status-metric{margin-left:0}
+/* No celular o cartão de boas-vindas do inspetor vazio só tapava a cena. */
+@container forma (max-width:760px){.forma-app #inspector:has(#empty-inspector){display:none}}

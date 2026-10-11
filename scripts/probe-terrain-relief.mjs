@@ -63,7 +63,7 @@ const shot = async (name, x, y, zoom) => {
 const log = [];
 
 // ------------------------------------------------------- the tool, as a player takes it
-await page.click('[data-tool="terrain"]');
+await page.click('.v2-cat[data-cat="landscape"]');
 for (const [id, value] of [['terrainRadius', '300'], ['terrainStrength', '40']]) {
   await page.evaluate(([id, value]) => {
     const input = document.getElementById(id);

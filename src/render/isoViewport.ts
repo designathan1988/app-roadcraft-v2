@@ -611,6 +611,9 @@ export function createIsoRig(
       heldTile = -1;
       setPointerChart(-1);
     },
+    // The same test the zoom's hold makes (`holdHeight`): met within three
+    // times the view's distance.
+    holds: (px, py, atHeight) => camera !== persp || holdHeight(px, py, atHeight) === atHeight,
     panTo(grabbed, px, py, _cssW, _cssH, atHeight = 0) {
       if (__PLANET__) { holdOnSphere(grabbed, px, py, atHeight); return; }
       // The grabbed point is held on its own plane (the height of what was

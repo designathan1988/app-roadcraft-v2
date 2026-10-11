@@ -116,6 +116,15 @@ export interface RoadNode {
    * node is the end of one road.
    */
   end?: RoadEnd;
+  /**
+   * A U-turn through an opening in the median (docs/VIAS.md V8, retorno): a
+   * piece the player puts on a road with a median, on a node joining two
+   * pieces of it - the piece whose traffic, arriving here, turns round. One
+   * direction per opening: two facing ones, each waiting at its own lane's
+   * end, stood in each other's half circle (2026-10-10). Read only while the
+   * node joins exactly two roads.
+   */
+  uturn?: SegmentId;
 }
 
 /** A road's end that is not the map's edge: a turning circle (balão de retorno). */
@@ -868,6 +877,15 @@ export class RoadDoc {
     this.roadsChanged(null, false, { detail: 'paint style' });
   }
 
+  /** A U-turn through the median for the traffic arriving from `from` (`RoadNode.uturn`), or none. */
+  setNodeUturn(id: NodeId, from: SegmentId | undefined): void {
+    const node = this.nodes.get(id);
+    if (!node || node.uturn === from) return;
+    if (from !== undefined) node.uturn = from;
+    else delete node.uturn;
+    this.markNode(id);
+  }
+
   /** What a road's end is (`RoadNode.end`): a turning circle, or (undefined) the map's edge. */
   setNodeEnd(id: NodeId, end: RoadEnd | undefined): void {
     const node = this.nodes.get(id);
@@ -1324,6 +1342,7 @@ export class RoadDoc {
         ...(node.approachRules ? { approachRules: node.approachRules.map((e) => ({ ...e })) } : {}),
         ...(node.signal ? { signal: { ...node.signal, ...(node.signal.greens ? { greens: [...node.signal.greens] } : {}) } } : {}),
         ...(node.end ? { end: node.end } : {}),
+        ...(node.uturn !== undefined ? { uturn: node.uturn } : {}),
       });
     }
     for (const [id, segment] of source.segments) {
@@ -1502,6 +1521,7 @@ export class RoadDoc {
         ...(n.approachRules ? { approachRules: n.approachRules.map((e) => ({ ...e })) } : {}),
         ...(n.signal ? { signal: { ...n.signal, ...(n.signal.greens ? { greens: [...n.signal.greens] } : {}) } } : {}),
         ...(n.end ? { end: n.end } : {}),
+        ...(n.uturn !== undefined ? { uturn: n.uturn as number } : {}),
       })),
       segments: [...this.segments.values()].map((s) => ({
         id: s.id,
@@ -1660,6 +1680,7 @@ export class RoadDoc {
       const signal = normalizeSignalSettings(n.signal);
       if (signal) node.signal = signal;
       if (n.end === 'bulb') node.end = 'bulb';
+      if (typeof n.uturn === 'number' && node.incident.includes(asSegmentId(n.uturn))) node.uturn = asSegmentId(n.uturn);
     }
     for (const dab of data.paint ?? []) {
       if (!isPaintKind(dab.kind) || ![dab.x, dab.y, dab.radius, dab.strength].every(Number.isFinite)) continue;
@@ -1832,6 +1853,8 @@ export interface SerializedDoc {
     signal?: unknown;
     /** A road's end that is a turning circle (V8); absent: the map's edge. */
     end?: string;
+    /** A U-turn through the median (V8): the road its traffic arrives from; absent on every older map. */
+    uturn?: number;
   }[];
   readonly segments: readonly {
     id: number;
@@ -1915,7 +1938,7 @@ function sameNode(p: RoadNode, q: RoadNode): boolean {
     p.control === q.control && sameList(p.incident, q.incident) && sameList(p.blockedMovements, q.blockedMovements) &&
     p.crossing?.kind === q.crossing?.kind && p.crossing?.segment === q.crossing?.segment &&
     linksDigest(p.laneLinks) === linksDigest(q.laneLinks) && rulesDigest(p.approachRules) === rulesDigest(q.approachRules) &&
-    signalDigest(p.signal) === signalDigest(q.signal) && p.end === q.end;
+    signalDigest(p.signal) === signalDigest(q.signal) && p.end === q.end && p.uturn === q.uturn;
 }
 
 /** Whether two versions of a segment are the same, field for field (its ends' positions aside). */

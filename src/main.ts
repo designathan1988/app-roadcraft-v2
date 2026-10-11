@@ -45,7 +45,7 @@ import {
   planPoleRun,
   type PoleRunPlan,
 } from '@editor/poles';
-import { blockGridChoice, onRoadGridChange, roadGridShown, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush, gullyErase, treeMode, treeKind, treeBrush, setTreeBrush, cloudMode, cloudBrush, setCloudBrush, elementKind, elementMode, elementBrush, setElementBrush, syncElementInputs } from '@ui/toolChoices';
+import { blockGridChoice, onRoadGridChange, roadGridShown, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush, gullyErase, treeMode, treeKind, treeBrush, setTreeBrush, cloudMode, cloudBrush, setCloudBrush, elementKind, elementMode, elementBrush, setElementBrush } from '@ui/toolChoices';
 import { TERRAIN_MIN_MS, TerrainBrush, type DabSettings } from '@editor/terrainBrush';
 import { scatterClouds, type PlacedCloud } from '@world/clouds';
 import { CloudTool } from '@editor/cloudTool';
@@ -72,12 +72,11 @@ import { DEFAULT_AZIMUTH, DEFAULT_ELEVATION, isoZoomBounds } from '@render/isoVi
 import { SimWorld } from '@sim/world';
 import { rebindAgents, step } from '@sim/pipeline';
 import { DT, NARROW_SCREEN_SHARE, NARROW_SCREEN_WIDTH } from '@sim/params';
-import { summarize } from '@sim/audit';
 
 import { type Anchor, anchorForHeight, findAnchor, roadSnap, setRoadSnap } from '@editor/snap';
 import { duplicateSegment, joinSegments, splitSegment } from '@editor/commit';
 import { type RoadEditRefusal, guardRoadEdit } from '@editor/editRules';
-import { commitPedestrianCrossing } from '@editor/streetObjects';
+import { commitPedestrianCrossing, commitUturn } from '@editor/streetObjects';
 import { commitRoundabout } from '@editor/roundabout';
 import { RoadTool, type RoadDraft } from '@editor/roadTool';
 import { Bulldozer } from '@editor/bulldozer';
@@ -91,30 +90,25 @@ import { cutWallsChosen } from '@ui/roads/cutWalls';
 import { ROAD_PARKING_PRESETS, type RoadParkingPreset, roadParking, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
 import { History, restoreInto, restoreSnapshot, serialize } from '@editor/history';
 import { type ImportResult, Persistence, exportToFile, importFromFile, type SavedSettings, DEFAULT_TRAFFIC_COUNT, DEFAULT_PEDESTRIAN_COUNT, MAX_TRAFFIC_COUNT, MAX_PEDESTRIAN_COUNT } from '@editor/persistence';
-import { drawMinimap, minimapToWorld } from '@ui/minimap';
-import { openInspector, closeInspector, refreshInspector } from '@ui/inspector';
+import { openInspector, closeInspector as hideInspector, onInspectorChange, refreshInspector } from '@ui/inspector';
 import { TransitTool, setTransitTool, transitTool } from '@editor/transitTools';
 import { type BuildingId, decayOf } from '@world/buildings/types';
-import { focusCameFromKeyboard, initChrome } from '@ui/chrome';
+import { focusCameFromKeyboard, trackFocusModality } from '@ui/chrome';
 import { roadSwatch } from '@ui/roadSwatch';
-import { mountBuildStamp } from '@ui/buildStamp';
-import { UI_V2 } from '@ui/shell/flag';
-import { mountShell } from '@ui/v2/shell';
+import { mountShell, type ShellHandle, type ShellRoadClass, type ShellSlider, type ShellStatus, type ShellZonePatch } from '@ui/v2/shell';
 import { formatCost } from '@ui/roads/money';
 import { type BuildMode, buildRuns } from '@world/roads/buildMode';
 import { profileRoad } from '@world/roads/profile';
-import { mountAbout } from '@ui/about';
-import { LANGUAGES, applyTranslations, formatDecimal, hasKey, initLanguage, language, onLanguageChange, setGlobalParams, setLanguage, t } from '@ui/i18n';
+import { mountAbout, openAbout } from '@ui/about';
+import { applyTranslations, formatDecimal, initLanguage, onLanguageChange, setGlobalParams, t } from '@ui/i18n';
 import { onRoadKeysChange, roadKeyAction, roadKeyParams } from '@ui/roads/keys';
 import {
-  nodeCountLabel,
   peopleCountLabel,
-  roadCountLabel,
   roadTypeDescription,
   roadTypeName,
   vehicleCountLabel,
 } from '@ui/labels';
-import { isQualityLevel, type QualityLevel } from '@render/quality';
+import { QUALITY_LEVELS, isQualityLevel, type QualityLevel } from '@render/quality';
 import { createBuildingWiring } from './buildingsWiring';
 import { levelElevation, roofRise } from '@world/buildings/geometry';
 import { volumeTop } from '@world/buildings/types';
@@ -139,6 +133,8 @@ type Tool =
   | 'barrier'
   | 'transit'
   | 'person';
+/** Every tool, as the interface names them. */
+const TOOLS: readonly Tool[] = ['building', 'zone', 'road', 'roundabout', 'terrain', 'upgrade', 'move', 'split', 'bulldoze', 'control', 'inspect', 'pole', 'streetscape', 'barrier', 'transit', 'person'];
 type Alignment = 'straight' | 'curve' | 'free';
 
 // The interface language is resolved and applied BEFORE anything reads a label,
@@ -148,7 +144,6 @@ setGlobalParams(roadKeyParams);
 initLanguage();
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
-const minimapCanvas = document.getElementById('minimap') as HTMLCanvasElement;
 
 /**
  * The game's health (`core/health.ts`): what broke and what was slow, with
@@ -430,9 +425,18 @@ const gameState = new GameState({
   perspective: false,
   /** What the player is in the middle of doing (`currentGesture`), null between gestures. */
   gesture: null as string | null,
+  // The history, the sky and the road inspector, as the interface shows them.
+  canUndo: false,
+  canRedo: false,
+  sky: 'day' as SkyMode,
+  inspectorOpen: false,
 }, () => { if (booted) requestDraw(); });
 /** The game's state, read-only: `game.tool`, `game.paused`, `game.selectedSegment`... */
 const game = gameState.values;
+/** The gully brush's strength, % (Paisagem > Relevo > Ravinas). */
+let gullyStrength = 60;
+/** How many clouds "spread over the sky" lays, and how much they vary, %. */
+const cloudScatter = { count: 8, variation: 40 };
 
 function sessionSettings(): SavedSettings {
   const centre = view.centre;
@@ -599,7 +603,7 @@ function dabSettings(): DabSettings {
     landform: landformOf(game.terrainMode),
     element: { mode: elementMode(), kind: elementKind(), brush: elementBrush(elementKind()) },
     tree: { mode: treeMode(), kind: treeKind(), brush: treeBrush() },
-    gully: { strength: Number((document.getElementById('gullyStrength') as HTMLInputElement | null)?.value ?? 60), erase: gullyErase() },
+    gully: { strength: gullyStrength, erase: gullyErase() },
     fog: { strength: fog.strength, height: fog.height, speed: fog.speed, erase: fogErase() },
     paint: paintKind(),
     random: Math.random,
@@ -941,8 +945,8 @@ const buildings = createBuildingWiring({
   scene,
   view: () => view,
   size: () => ({ w: surface.cssW, h: surface.cssH }),
-  undo: () => undoButton.click(),
-  redo: () => redoButton.click(),
+  undo: () => undo(),
+  redo: () => redo(),
   focusBuilding(building) {
     const ground = building.volumes.filter((v) => v.base === 0);
     if (ground.length === 0) return;
@@ -981,12 +985,6 @@ const buildings = createBuildingWiring({
   flash: (key, params) => flashHint(key, params),
   hintChanged: () => updateHint(),
 });
-/** The ground the camera sees: the screen's four corners, on the ground. */
-function viewFootprint(): Vec2[] {
-  const { cssW: w, cssH: h } = surface;
-  return [[0, 0], [w, 0], [w, h], [0, h]].map(([x, y]) => view.toWorld(x!, y!, w, h));
-}
-
 /** Puts the camera back at a saved bearing and tilt; a save without one gets the default view. */
 function restoreOrbit(saved: SavedSettings['camera'] | undefined): void {
   view.setOrbit(saved?.azimuth ?? DEFAULT_AZIMUTH, saved?.elevation ?? DEFAULT_ELEVATION);
@@ -1135,12 +1133,6 @@ function applySnapshot(data: ReturnType<RoadDoc['toJSON']> | null, source: 'snap
   // buildings then came on frames of their own over 24 s (2026-10-09).
   if (source === 'import') scene.beginLoad();
   buildings.restored();
-  syncFogInputs();
-  syncGullyInputs();
-  syncWeatherInputs();
-  // The map's road paint in its menu (declared further down: read by id, the first map opens before it).
-  const paintSelect = document.getElementById('paintStyleSelect') as HTMLSelectElement | null;
-  if (paintSelect) paintSelect.value = doc.markingStyle;
   select(null, game.selectedSegmentS, null, 'outro mapa');
   closeInspector();
   persistence.saveSessionSoon(doc, sessionSettings);
@@ -1400,29 +1392,6 @@ function cancelMove(): void {
 }
 
 
-// The element brush's settings (Paisagem > Terreno > Elementos), each kind its
-// own (`ui/toolChoices.ts`); the sliders show the chosen kind's.
-{
-  const keys = { elDensity: 'density', elSize: 'size', elVariation: 'variation', elSpacing: 'spacing', elStrength: 'strength', elIntensity: 'intensity' } as const;
-  for (const [id, key] of Object.entries(keys) as [keyof typeof keys, (typeof keys)[keyof typeof keys]][]) {
-    const input = document.getElementById(id) as HTMLInputElement | null;
-    input?.addEventListener('input', () => {
-      setElementBrush({ [key]: Number(input.value) });
-      text(`${id}Value`, input.value);
-    });
-  }
-  syncElementInputs();
-  (document.getElementById('clearElements') as HTMLButtonElement | null)?.addEventListener('click', () => {
-    if (doc.elements.length === 0) return;
-    if (!window.confirm(t('confirm.clearElements'))) return;
-    history.record(doc);
-    doc.clearElements();
-    updateHistoryButtons();
-    persistence.saveSessionSoon(doc, sessionSettings);
-    requestDraw();
-  });
-}
-
 // THE CLOUD TOOL (Paisagem > Terreno > Nuvens): a click puts a cloud in the
 // sky right under the pointer, drags one to move it, sets one to the tool's
 // size, height and density, or takes one away (`world/clouds.ts`). Each is
@@ -1441,67 +1410,6 @@ const cloudTool = new CloudTool({
   },
   hint: (key) => flashHint(key),
 });
-{
-  const bind = (id: string, read: () => number, write: (v: number) => void): void => {
-    const input = document.getElementById(id) as HTMLInputElement | null;
-    if (!input) return;
-    input.value = String(read());
-    text(`${id}Value`, String(read()));
-    input.addEventListener('input', () => {
-      write(Number(input.value));
-      text(`${id}Value`, input.value);
-    });
-  };
-  bind('cloudSize', () => cloudBrush().size, (v) => setCloudBrush({ size: v }));
-  bind('cloudHeight', () => cloudBrush().height, (v) => setCloudBrush({ height: v }));
-  bind('cloudDensity', () => cloudBrush().density, (v) => setCloudBrush({ density: v }));
-  /**
-   * Clouds spread about the view (`scatterClouds`, which lays them about the
-   * map's middle). On the planet the map's middle is one piece at the atlas's
-   * origin, wherever the player looks: they are laid about the place in the
-   * middle of the view instead, each kept on the chart of the piece it comes
-   * to lie over, and kept apart from the clouds already there, on its chart.
-   */
-  const scatterCloudsHere = (count: number, like: Parameters<typeof scatterClouds>[1], variation: number,
-    existing: readonly PlacedCloud[]): ReturnType<typeof scatterClouds> => {
-    if (!__PLANET__) return scatterClouds(count, like, variation, MAP_SIZE / 2, existing, Math.random);
-    const centre = view.toWorld(surface.cssW / 2, surface.cssH / 2, surface.cssW, surface.cssH);
-    const chart = chartAt(centre.x, centre.y);
-    const near = existing.map((c) => { const q = onChartOf(c, centre); return { ...c, x: q.x - centre.x, y: q.y - centre.y }; });
-    return scatterClouds(count, like, variation, MAP_SIZE / 2, near, Math.random)
-      .map((c) => ({ ...c, ...toOwner(chart, { x: centre.x + c.x, y: centre.y + c.y }) }));
-  };
-  // Spread clouds over the sky: as many as asked, about the tool's size,
-  // height and density, varied - each one then to move, set or take away.
-  (document.getElementById('scatterClouds') as HTMLButtonElement | null)?.addEventListener('click', () => {
-    const count = Number((document.getElementById('cloudCount') as HTMLInputElement | null)?.value ?? 8);
-    const variation = Number((document.getElementById('cloudVariation') as HTMLInputElement | null)?.value ?? 40) / 100;
-    const brush = cloudBrush();
-    const laid = scatterCloudsHere(count, {
-      size: brush.size * UNITS_PER_METER, height: brush.height * UNITS_PER_METER, density: brush.density / 100,
-    }, variation, doc.clouds);
-    history.record(doc);
-    const added = doc.addClouds(laid);
-    if (added < count) flashHint('hint.cloud.full');
-    updateHistoryButtons();
-    persistence.saveSessionSoon(doc, sessionSettings);
-    requestDraw();
-  });
-  for (const id of ['cloudCount', 'cloudVariation']) {
-    const input = document.getElementById(id) as HTMLInputElement | null;
-    input?.addEventListener('input', () => text(`${id}Value`, input.value));
-  }
-  (document.getElementById('clearClouds') as HTMLButtonElement | null)?.addEventListener('click', () => {
-    if (doc.clouds.length === 0) return;
-    if (!window.confirm(t('confirm.clearClouds'))) return;
-    history.record(doc);
-    for (const cloud of [...doc.clouds]) doc.removeCloud(cloud.id);
-    updateHistoryButtons();
-    persistence.saveSessionSoon(doc, sessionSettings);
-    requestDraw();
-  });
-}
-
 /** Ends the brush stroke (`TerrainBrush.end`), warning when the land's stamps near their cap. */
 function endTerrainStroke(): void {
   const wasPainting = terrainBrush.end();
@@ -1943,12 +1851,12 @@ window.addEventListener('keydown', (e) => {
 
   if (meta && e.key.toLowerCase() === 's') {
     e.preventDefault();
-    (document.getElementById('saveMap') as HTMLButtonElement).click();
+    saveMap();
     return;
   }
   if (meta && e.key.toLowerCase() === 'o') {
     e.preventDefault();
-    (document.getElementById('openMap') as HTMLButtonElement).click();
+    void openMap();
     return;
   }
   if (meta && e.key.toLowerCase() === 'd') {
@@ -1959,12 +1867,12 @@ window.addEventListener('keydown', (e) => {
 
   if (meta && e.key.toLowerCase() === 'z' && !e.shiftKey) {
     e.preventDefault();
-    undoButton.click();
+    undo();
     return;
   }
   if (meta && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
     e.preventDefault();
-    redoButton.click();
+    redo();
     return;
   }
 
@@ -1972,7 +1880,7 @@ window.addEventListener('keydown', (e) => {
   if (!meta && (e.key === 'Delete' || e.key === 'Backspace') && game.tool === 'inspect' && game.selectedSegment !== null) {
     e.preventDefault();
     const id = game.selectedSegment;
-    (document.getElementById('closeInspector') as HTMLButtonElement).click();
+    closeInspectorPanel();
     mutate(() => {
       doc.removeSegment(id);
       doc.pruneOrphanNodes();
@@ -1989,7 +1897,7 @@ window.addEventListener('keydown', (e) => {
     if (target instanceof HTMLButtonElement && focusCameFromKeyboard()) return;
     e.preventDefault();
     target?.blur?.();
-    trafficButton.click();
+    setSpeed(game.paused ? game.speed : 0);
     return;
   }
 
@@ -2056,101 +1964,23 @@ window.addEventListener('keydown', (e) => {
 });
 
 // -------------------------------------------------------------------- ui
-const roadTypesEl = document.getElementById('roadTypes') as HTMLElement;
+// The interface (`ui/v2/shell.ts`) reads the game's state and calls the
+// commands below, handed to it in `mountInterface`: the page holds no control
+// of the game's own (it held a second, hidden interface that the visible one
+// read and clicked four times a second, docs/PLANO.md 5g).
 
-/** Every class, drawn: the tile shows the road the class lays. */
-ROAD_TYPES.forEach((rt, i) => {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.className = 'road-type' + (i === game.roadTypeIndex ? ' active' : '');
-  b.dataset['typeIndex'] = String(i);
-  // Its total width in metres, which the width stepper starts from.
-  b.dataset['widthM'] = String(Math.round((rt.width + rt.sidewalk * 2) * METERS_PER_UNIT));
-  b.setAttribute('aria-pressed', String(i === game.roadTypeIndex));
-  b.setAttribute('aria-label', `${roadTypeName(rt)}: ${roadTypeDescription(rt)}`);
-  b.innerHTML = `<img class="road-type-art" src="${roadSwatch(rt)}" alt="" /><span class="road-type-name"></span>`;
-  b.querySelector('.road-type-name')!.textContent = roadTypeName(rt);
-  b.title = `${roadTypeName(rt)} — ${roadTypeDescription(rt)}`;
-  b.onclick = () => selectRoadType(i);
-  roadTypesEl.appendChild(b);
-});
-
-/**
- * What can be done to a road once it is drawn, at the end of the row of
- * classes: the same gesture a player makes, in the place they are looking.
- */
-for (const [op, icon] of [
-  ['upgrade', '<path d="M12 4v16M4 12h16"/><path d="m8 8 4-4 4 4"/>'],
-  ['move', '<path d="M12 3v18M3 12h18"/><path d="m9 6 3-3 3 3m-6 12 3 3 3-3m3-9 3 3-3 3M6 9l-3 3 3 3"/>'],
-  ['split', '<path d="M4 7h16M4 17h16"/><path d="M12 3v18"/><path d="m9 10 3 3 3-3"/>'],
-  ['control', '<rect x="8" y="3" width="8" height="15" rx="2"/><path d="M12 18v3"/><circle cx="12" cy="7" r="1.4"/><circle cx="12" cy="10.6" r="1.4"/><circle cx="12" cy="14.2" r="1.4"/>'],
-  ['roundabout', '<circle cx="12" cy="12" r="6"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4m-9-7 3 1-2 3"/>'],
-] as const) {
-  if (op === 'roundabout' && !freeRoadsEnabled()) continue;
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.className = 'road-type road-op';
-  b.dataset['roadOp'] = op;
-  b.setAttribute('aria-pressed', 'false');
-  b.setAttribute('aria-keyshortcuts', t(`tool.${op}`).charAt(0));
-  b.innerHTML = `<span class="road-type-art op"><svg viewBox="0 0 24 24" aria-hidden="true">${icon}</svg></span><span class="road-type-name"></span>`;
-  b.querySelector('.road-type-name')!.textContent = t(`tool.${op}`);
-  b.title = t(`tool.${op}`);
-  roadTypesEl.appendChild(b);
+/** Each class's picture, drawn once (`roadSwatch` paints a canvas). */
+const roadClassPictures: string[] = [];
+/** Every road class as the upgrade tool shows it: name, picture, total width in whole metres. */
+function roadClasses(): ShellRoadClass[] {
+  return ROAD_TYPES.map((rt, index) => ({
+    index,
+    name: roadTypeName(rt),
+    title: `${roadTypeName(rt)} — ${roadTypeDescription(rt)}`,
+    picture: (roadClassPictures[index] ??= roadSwatch(rt)),
+    widthM: Math.round((rt.width + rt.sidewalk * 2) * METERS_PER_UNIT),
+  }));
 }
-
-/**
- * Interface v2: what the road tool does is a row of modes at the top of its
- * panel - draw, improve, move, split, junctions, roundabout - as Cities:
- * Skylines II puts its tool modes apart from its road catalogue. The
- * operations no longer sit among the road classes as if they were roads.
- */
-const roadModes = document.createElement('div');
-roadModes.className = 'road-modes';
-roadModes.setAttribute('role', 'group');
-const roadModeNote = document.createElement('p');
-roadModeNote.className = 'road-mode-note';
-if (UI_V2) {
-  for (const op of ['road', 'upgrade', 'move', 'split', 'control', 'roundabout'] as const) {
-    if (op === 'roundabout' && !freeRoadsEnabled()) continue;
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'road-mode';
-    b.dataset['roadMode'] = op;
-    b.textContent = op === 'road' ? t('tool.draw') : t(`tool.${op}`);
-    b.onclick = () => pickTool(op);
-    roadModes.appendChild(b);
-  }
-  document.getElementById('paletteBody')?.prepend(roadModes, roadModeNote);
-}
-function syncRoadModes(current: Tool): void {
-  if (!UI_V2) return;
-  for (const b of roadModes.querySelectorAll<HTMLButtonElement>('[data-road-mode]')) {
-    const on = b.dataset['roadMode'] === current;
-    b.classList.toggle('active', on);
-    b.setAttribute('aria-pressed', String(on));
-  }
-  // Each mode shows only its own options: drawing has them all, improving
-  // keeps the class to improve to, and the rest work by a click on the map.
-  const palette = document.querySelector<HTMLElement>('.road-palette');
-  if (palette) palette.dataset['roadMode'] = current;
-  // The head's hint already says what a click does in this mode.
-  roadModeNote.textContent = '';
-  roadModeNote.hidden = roadModeNote.textContent === '';
-}
-
-const roundaboutSettings = document.createElement('label');
-roundaboutSettings.className = 'inspect-range';
-roundaboutSettings.hidden = true;
-roundaboutSettings.innerHTML = '<span data-i18n="road.roundabout.radius"></span><output>40 m</output><input type="range" min="32" max="128" step="4" value="40" />';
-roundaboutSettings.querySelector('span')!.textContent = t('road.roundabout.radius');
-const roundaboutSize = roundaboutSettings.querySelector('input')!;
-roundaboutSize.oninput = () => {
-  gameState.set('roundaboutRadius', Number(roundaboutSize.value) * UNITS_PER_METER, 'tamanho da rotatória');
-  roundaboutSettings.querySelector('output')!.value = `${roundaboutSize.value} m`;
-  requestDraw();
-};
-document.getElementById('paletteBody')?.prepend(roundaboutSettings);
 
 /**
  * The lanes a road is laid at. The count is stored per segment, so a street
@@ -2158,525 +1988,282 @@ document.getElementById('paletteBody')?.prepend(roundaboutSettings);
  * is the class that carries a central reservation (`game.roadLanePreset`).
  */
 const MEDIAN_CLASS = ROAD_TYPES.findIndex((rt) => rt.median > 0);
-const roadLanesEl = document.getElementById('roadLanes') as HTMLElement;
 const LANE_CHOICES: readonly { readonly id: string; readonly lanes: number | null }[] = [
   { id: '2', lanes: 2 },
   { id: '4', lanes: 4 },
   { id: '6', lanes: 6 },
   { id: 'median', lanes: null },
 ];
-for (const choice of LANE_CHOICES) {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.className = 'road-lane';
-  b.dataset['laneChoice'] = choice.id;
-  b.setAttribute('aria-pressed', 'false');
-  const sample = choice.lanes === null
-    ? roadType(MEDIAN_CLASS)
-    : roadProfile(game.roadTypeIndex, choice.lanes);
-  const laneLabel = choice.lanes === null ? t('palette.lanes.median') : t('palette.lanes.count', { count: choice.lanes });
-  b.innerHTML = `<img src="${roadSwatch(sample, 74, 38)}" alt="" /><span></span>`;
-  b.querySelector('span')!.textContent = laneLabel;
-  b.title = laneLabel;
-  b.onclick = () => {
-    gameState.set('roadLanePreset', choice.lanes, 'faixas escolhidas');
-    if (choice.lanes === null) selectRoadType(MEDIAN_CLASS);
-    updateLaneChoices();
-    refreshLaneSwatches();
-    requestDraw();
-  };
-  roadLanesEl.appendChild(b);
+/** The lane choices, the one the next road will be laid as lit: with no count chosen, the class's own. */
+function laneChoices(): { id: string; label: string; on: boolean }[] {
+  return LANE_CHOICES.map((choice) => ({
+    id: choice.id,
+    label: choice.lanes === null ? t('palette.lanes.median') : t('palette.lanes.count', { count: choice.lanes }),
+    on: choice.lanes === null
+      ? game.roadLanePreset === null && game.roadTypeIndex === MEDIAN_CLASS
+      : game.roadTypeIndex !== MEDIAN_CLASS && choice.lanes === (game.roadLanePreset ?? roadType(game.roadTypeIndex).lanes),
+  }));
 }
-
-function updateLaneChoices(): void {
-  for (const b of roadLanesEl.querySelectorAll<HTMLButtonElement>('.road-lane')) {
-    const id = b.dataset['laneChoice'];
-    const choice = LANE_CHOICES.find((c) => c.id === id);
-    // With no count chosen, the class's own count is the one in hand: the row
-    // says what the next road will actually be laid as.
-    const on = choice !== undefined && (
-      choice.lanes === null
-        ? game.roadLanePreset === null && game.roadTypeIndex === MEDIAN_CLASS
-        : game.roadTypeIndex !== MEDIAN_CLASS && choice.lanes === (game.roadLanePreset ?? roadType(game.roadTypeIndex).lanes)
-    );
-    b.classList.toggle('active', on);
-    b.setAttribute('aria-pressed', String(on));
-  }
-}
-
-/** The pictures redraw against the class in hand, so they read as its widths. */
-function refreshLaneSwatches(): void {
-  for (const b of roadLanesEl.querySelectorAll<HTMLButtonElement>('.road-lane')) {
-    const choice = LANE_CHOICES.find((c) => c.id === b.dataset['laneChoice']);
-    if (!choice) continue;
-    const img = b.querySelector('img');
-    if (!img) continue;
-    const sample = choice.lanes === null ? roadType(MEDIAN_CLASS) : roadProfile(game.roadTypeIndex, choice.lanes);
-    img.src = roadSwatch(sample, 74, 38);
-    const label = b.querySelector('span');
-    if (label) label.textContent = choice.lanes === null
-      ? t('palette.lanes.median')
-      : t('palette.lanes.count', { count: choice.lanes });
-  }
-}
-
-/**
- * The classes roll past under the fixed plan. The arrows page the strip; when
- * every class already fits they fade out rather than disappear, so the row
- * never changes width under the pointer.
- */
-const roadCarousel = roadTypesEl.parentElement as HTMLElement;
-function updateCarousel(): void {
-  const room = roadTypesEl.scrollWidth - roadTypesEl.clientWidth;
-  roadCarousel.classList.toggle('scrollable', room > 1);
-  roadCarousel.classList.toggle('at-start', roadTypesEl.scrollLeft <= 1);
-  roadCarousel.classList.toggle('at-end', roadTypesEl.scrollLeft >= room - 1);
-}
-for (const step of document.querySelectorAll<HTMLButtonElement>('.carousel-step')) {
-  step.onclick = () => {
-    const page = Math.max(180, roadTypesEl.clientWidth * 0.75) * Number(step.dataset['carousel'] ?? 1);
-    roadTypesEl.scrollBy({ left: page, behavior: 'smooth' });
-  };
-}
-roadTypesEl.addEventListener('scroll', updateCarousel, { passive: true });
-window.addEventListener('resize', updateCarousel);
-updateCarousel();
-
-/** Re-renders every label the road palette owns, after a language change. */
-function refreshRoadTypeLabels(): void {
-  for (const child of roadTypesEl.querySelectorAll<HTMLElement>('[data-type-index]')) {
-    const rt = ROAD_TYPES[Number(child.dataset['typeIndex'])];
-    if (!rt) continue;
-    child.setAttribute('aria-label', `${roadTypeName(rt)}: ${roadTypeDescription(rt)}`);
-    child.title = `${roadTypeName(rt)} — ${roadTypeDescription(rt)}`;
-    const name = child.querySelector('.road-type-name');
-    if (name) name.textContent = roadTypeName(rt);
-  }
-  for (const op of roadTypesEl.querySelectorAll<HTMLElement>('.road-op')) {
-    const label = op.querySelector('.road-type-name');
-    if (label && op.dataset['roadOp']) label.textContent = t(`tool.${op.dataset['roadOp']}`);
-  }
-  refreshLaneSwatches();
-  updateLaneChoices();
+function setLanes(id: string): void {
+  const choice = LANE_CHOICES.find((c) => c.id === id);
+  if (!choice) return;
+  gameState.set('roadLanePreset', choice.lanes, 'faixas escolhidas');
+  if (choice.lanes === null) selectRoadType(MEDIAN_CLASS);
+  requestDraw();
 }
 
 function selectRoadType(i: number): void {
+  if (!ROAD_TYPES[i]) return;
   gameState.set('roadTypeIndex', i, 'classe de via escolhida');
-  for (const child of roadTypesEl.querySelectorAll<HTMLElement>('[data-type-index]')) {
-    const on = Number(child.dataset['typeIndex']) === i;
-    child.classList.toggle('active', on);
-    child.setAttribute('aria-pressed', String(on));
-  }
-  updateLaneChoices();
-  refreshLaneSwatches();
   requestDraw();
 }
 
 function setAlignment(next: Alignment): void {
   gameState.set('alignment', next, 'traçado escolhido');
   if (next !== 'curve') roadTool.dropCurve();
-  document.querySelectorAll<HTMLButtonElement>('.alignment-mode').forEach((button) => {
-    const active = button.dataset['alignment'] === next;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-pressed', String(active));
-  });
   updateHint();
   requestDraw();
 }
-
-document.querySelectorAll<HTMLButtonElement>('.alignment-mode').forEach((button) => {
-  button.onclick = () => setAlignment((button.dataset['alignment'] as Alignment) ?? 'straight');
-});
 // A key rebound: every sentence that names it is written again.
 onRoadKeysChange(() => { applyTranslations(document); updateHint(); });
 
-// The road's own operations, beside its classes: each one takes the pointer.
-document.querySelectorAll<HTMLButtonElement>('.road-op').forEach((button) => {
-  button.onclick = () => setTool((button.dataset['roadOp'] as Tool) ?? 'road');
-});
+/** The roundabout's radius, in whole metres. */
+const ROUNDABOUT_RADIUS_M = [32, 128] as const;
 
-function updateRoadHeightValue(): void {
-  const value = document.getElementById('roadHeightValue');
-  const context = document.getElementById('roadHeightContext');
-  const stateKey = game.roadHeightOffset > 1e-6 ? 'palette.height.above'
-    : game.roadHeightOffset < -1e-6 ? 'palette.height.below' : 'palette.height.ground';
-  if (value) {
-    const metres = game.roadHeightOffset / UNITS_PER_METER;
-    value.textContent = `${Math.abs(metres - Math.round(metres)) < 1e-6
-      ? Math.round(metres) : formatDecimal(metres, 1)} m`;
-  }
-  if (context) {
-    context.dataset['i18n'] = stateKey;
-    context.textContent = t(stateKey);
-  }
-}
-
-document.querySelectorAll<HTMLButtonElement>('.road-height-step').forEach((button) => {
-  button.onclick = () => roadTool.stepHeight(Number(button.dataset['heightStep']));
-});
-// The height shown is the game's state, wherever it was changed from.
-gameState.watch(['roadHeightOffset'], updateRoadHeightValue);
-updateRoadHeightValue();
-
-const roadPalette = document.querySelector<HTMLElement>('.road-palette');
-const terrainPalette = document.getElementById('terrainPalette') as HTMLElement;
-const zonePalette = document.getElementById('zonePalette') as HTMLElement;
-const zoneRemoveButton = document.getElementById('zoneRemove') as HTMLButtonElement;
-zoneRemoveButton.addEventListener('click', () => {
-  gameState.set('zoneEraser', !game.zoneEraser, 'borracha de zona');
-  zoneRemoveButton.classList.toggle('active', game.zoneEraser);
-  zoneRemoveButton.setAttribute('aria-pressed', String(game.zoneEraser));
-  requestDraw();
-});
-document.querySelectorAll<HTMLButtonElement>('[data-zone-mode]').forEach((button) => {
-  button.addEventListener('click', () => {
-    const wanted = button.dataset['zoneMode'];
+/** A lot or zone setting changed (Zoning): the use, the density, the eraser, the lot verb, the cut. */
+function setZone(patch: ShellZonePatch): void {
+  if (patch.eraser !== undefined) gameState.set('zoneEraser', patch.eraser, 'borracha de zona');
+  if (patch.use === 'residential' || patch.use === 'commercial' || patch.use === 'industrial') gameState.set('zoneUse', patch.use, 'uso da zona');
+  if (patch.density === 'low' || patch.density === 'medium' || patch.density === 'high') gameState.set('zoneDensity', patch.density, 'densidade da zona');
+  if (patch.mode !== undefined) {
+    const wanted = patch.mode;
     gameState.set('zoneMode', wanted === 'fill' || wanted === 'edit' || wanted === 'front' || wanted === 'split' || wanted === 'join' || wanted === 'add' ||
       wanted === 'polygon' || wanted === 'curve' || wanted === 'delete' ? wanted : 'brush', 'modo de zona');
     lotTool.modeChanged();
-    document.querySelectorAll<HTMLButtonElement>('[data-zone-mode]').forEach((item) => {
-      const active = item === button;
-      item.classList.toggle('active', active);
-      item.setAttribute('aria-pressed', String(active));
-    });
-    requestDraw();
-  });
-});
-document.querySelectorAll<HTMLButtonElement>('[data-lot-split]').forEach((button) => {
-  button.addEventListener('click', () => {
-    gameState.set('lotSplitKind', button.dataset['lotSplit'] === 'horizontal' ? 'horizontal' : button.dataset['lotSplit'] === 'line' ? 'line' : 'vertical', 'corte de lote');
-    document.querySelectorAll<HTMLButtonElement>('[data-lot-split]').forEach((item) => item.classList.toggle('active', item === button));
-    requestDraw();
-  });
-});
-document.querySelectorAll<HTMLButtonElement>('[data-lot-parts]').forEach((button) => {
-  button.addEventListener('click', () => {
-    gameState.set('lotSplitParts', Number(button.dataset['lotParts']) || 2, 'partes do lote');
-    document.querySelectorAll<HTMLButtonElement>('[data-lot-parts]').forEach((item) => item.classList.toggle('active', item === button));
-    requestDraw();
-  });
-});
-document.querySelectorAll<HTMLButtonElement>('[data-zone-use]').forEach((button) => {
-  button.addEventListener('click', () => {
-    gameState.set('zoneUse', button.dataset['zoneUse'] as ZoneUse, 'uso da zona');
-    document.querySelectorAll<HTMLButtonElement>('[data-zone-use]').forEach((item) => {
-      const active = item === button;
-      item.classList.toggle('active', active);
-      item.setAttribute('aria-pressed', String(active));
-    });
-    requestDraw();
-  });
-});
-document.querySelectorAll<HTMLButtonElement>('[data-zone-density]').forEach((button) => {
-  button.addEventListener('click', () => {
-    gameState.set('zoneDensity', button.dataset['zoneDensity'] as ZoneDensity, 'densidade da zona');
-    document.querySelectorAll<HTMLButtonElement>('[data-zone-density]').forEach((item) => {
-      const active = item === button;
-      item.classList.toggle('active', active);
-      item.setAttribute('aria-pressed', String(active));
-    });
-    requestDraw();
-  });
-});
+  }
+  if (patch.splitKind !== undefined) gameState.set('lotSplitKind', patch.splitKind === 'horizontal' ? 'horizontal' : patch.splitKind === 'line' ? 'line' : 'vertical', 'corte de lote');
+  if (patch.splitParts !== undefined) gameState.set('lotSplitParts', clamp(Math.round(patch.splitParts), 2, 6), 'partes do lote');
+  requestDraw();
+}
 
+/** Every brush of the terrain tool, in the order of its number keys. */
+const BRUSH_MODES: readonly BrushMode[] = ['raise', 'lower', 'flatten', 'river', 'paint', 'mesa', 'canyon', 'escarpment', 'sugarloaf', 'fog', 'cloud', 'elements', 'gully', 'trees', 'weather'];
 function setTerrainMode(next: BrushMode): void {
   gameState.set('terrainMode', next, 'pincel de terreno');
   // Each tool its own hardness: a chapada's cliff is not the hill's slope.
   const hardness = hardnessByMode[next];
-  const hardnessInput = document.getElementById('terrainHardness') as HTMLInputElement | null;
-  if (hardness !== undefined && hardnessInput) {
-    gameState.set('terrainHardness', hardness, 'dureza do modo');
-    hardnessInput.value = String(hardness);
-    text('terrainHardnessValue', String(hardness));
-  }
-  document.querySelectorAll<HTMLButtonElement>('[data-terrain-mode]').forEach((button) => {
-    const active = button.dataset['terrainMode'] === next;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-pressed', String(active));
-  });
-  const fogPanel = document.querySelector<HTMLElement>('.terrain-fog');
-  if (fogPanel) fogPanel.hidden = next !== 'fog';
-  const cloudPanel = document.querySelector<HTMLElement>('.terrain-cloud');
-  if (cloudPanel) cloudPanel.hidden = next !== 'cloud';
-  const weatherPanel = document.querySelector<HTMLElement>('.terrain-weather');
-  if (weatherPanel) weatherPanel.hidden = next !== 'weather';
-  const treePanel = document.querySelector<HTMLElement>('.terrain-trees');
-  if (treePanel) treePanel.hidden = next !== 'trees';
-  const gullyPanel = document.querySelector<HTMLElement>('.terrain-gully');
-  if (gullyPanel) gullyPanel.hidden = next !== 'gully';
-  const elementPanel = document.querySelector<HTMLElement>('.terrain-elements');
-  if (elementPanel) elementPanel.hidden = next !== 'elements';
+  if (hardness !== undefined) gameState.set('terrainHardness', hardness, 'dureza do modo');
   updateHint();
 }
 
-// The fog BRUSH's settings (Paisagem > Terreno > Neblina): how thick, how
-// high over the ground, how fast the wind carries it - laid with every dab,
-// so each bank keeps its own (`world/fogPaint.ts`); kept between sessions.
-// And the map's own thickness over all of them, kept in the map. Heights and
-// speeds shown in metres.
-{
-  const bind = (id: string, read: () => number, write: (v: number) => void): void => {
-    const input = document.getElementById(id) as HTMLInputElement | null;
-    if (!input) return;
-    input.value = String(read());
-    text(`${id}Value`, String(read()));
-    input.addEventListener('input', () => {
-      write(Number(input.value));
-      text(`${id}Value`, input.value);
-    });
-  };
-  bind('fogStrength', () => fogBrush().strength, (v) => setFogBrush({ strength: v }));
-  bind('fogHeight', () => fogBrush().height, (v) => setFogBrush({ height: v }));
-  bind('fogSpeed', () => fogBrush().speed, (v) => setFogBrush({ speed: v }));
-}
-/** The map's fog thickness slider made to show the map (after a load or an undo). */
-function syncFogInputs(): void {
-  const input = document.getElementById('fogMapDensity') as HTMLInputElement | null;
-  if (!input) return;
-  const value = Math.round(doc.fogSettings.density * 100);
-  input.value = String(value);
-  text('fogMapDensityValue', String(value));
-}
-{
-  let recorded = false;
-  const input = document.getElementById('fogMapDensity') as HTMLInputElement | null;
-  input?.addEventListener('input', () => {
-    // One undo step a drag of the slider.
-    if (!recorded) { history.record(doc); recorded = true; updateHistoryButtons(); }
-    text('fogMapDensityValue', input.value);
-    doc.setFogSettings({ density: Number(input.value) / 100 });
-    persistence.saveSessionSoon(doc, sessionSettings);
-    requestDraw();
-  });
-  input?.addEventListener('change', () => { recorded = false; });
-  syncFogInputs();
-}
-// THE WEATHER (Paisagem > Terreno > Clima, `world/weather.ts`): the map's
-// rain, wind, lightning and thunder; one undo step a drag of a slider. The
-// thunder is heard at every strike, as late as sound takes to come.
-const WEATHER_INPUTS = [
-  ['weatherRain', 'rain', 100], ['weatherWind', 'wind', 1], ['weatherWindDir', 'windDirection', 1],
-  ['weatherLightning', 'lightning', 1], ['weatherThunder', 'thunder', 100],
-  // The water's, under the river brush.
-  ['waterWaves', 'waves', 100], ['waterFoam', 'foam', 100], ['waterCurrent', 'current', 1],
-] as const;
-function syncWeatherInputs(): void {
-  for (const [id, key, scale] of WEATHER_INPUTS) {
-    const input = document.getElementById(id) as HTMLInputElement | null;
-    if (!input) continue;
-    input.value = String(Math.round(doc.weather[key] * scale * 10) / 10);
-    text(`${id}Value`, input.value);
-  }
-}
-{
-  for (const [id, key, scale] of WEATHER_INPUTS) {
-    const input = document.getElementById(id) as HTMLInputElement | null;
-    let recorded = false;
-    input?.addEventListener('input', () => {
-      if (!recorded) { history.record(doc); recorded = true; updateHistoryButtons(); }
-      text(`${id}Value`, input.value);
-      doc.setWeather({ [key]: Number(input.value) / scale });
-      persistence.saveSessionSoon(doc, sessionSettings);
-      requestDraw();
-    });
-    input?.addEventListener('change', () => { recorded = false; });
-  }
-  syncWeatherInputs();
-  scene.onStrike((_x, _y, distance) => playThunder(distance / UNITS_PER_METER, doc.weather.thunder));
-}
-// The tree brush's settings (Paisagem > Terreno > Árvores), kept between
-// sessions; and clearing every planted tree and every clearing at once.
-{
-  const bind = (id: string, key: 'density' | 'height' | 'variation' | 'spacing'): void => {
-    const input = document.getElementById(id) as HTMLInputElement | null;
-    if (!input) return;
-    input.value = String(treeBrush()[key]);
-    text(`${id}Value`, input.value);
-    input.addEventListener('input', () => {
-      setTreeBrush({ [key]: Number(input.value) });
-      text(`${id}Value`, input.value);
-    });
-  };
-  bind('treeDensity', 'density');
-  bind('treeHeight', 'height');
-  bind('treeVariation', 'variation');
-  bind('treeSpacing', 'spacing');
-  (document.getElementById('clearTrees') as HTMLButtonElement | null)?.addEventListener('click', () => {
-    if (doc.trees.length === 0 && doc.treeClearings.length === 0) return;
-    if (!window.confirm(t('confirm.clearTrees'))) return;
-    history.record(doc);
-    doc.clearTrees();
-    updateHistoryButtons();
-    persistence.saveSessionSoon(doc, sessionSettings);
-    requestDraw();
-  });
-}
-// The gully brush's strength, and how much of the steep land carries gullies
-// of itself (the map's, `world/gullies.ts`): one undo step a drag.
-{
-  const strength = document.getElementById('gullyStrength') as HTMLInputElement | null;
-  strength?.addEventListener('input', () => text('gullyStrengthValue', strength.value));
-  let recorded = false;
-  const input = document.getElementById('gullyAuto') as HTMLInputElement | null;
-  input?.addEventListener('input', () => {
-    if (!recorded) { history.record(doc); recorded = true; updateHistoryButtons(); }
-    text('gullyAutoValue', input.value);
-    doc.setGullyAuto(Number(input.value) / 100);
-    persistence.saveSessionSoon(doc, sessionSettings);
-    requestDraw();
-  });
-  input?.addEventListener('change', () => { recorded = false; });
-  syncGullyInputs();
-}
-/** The map's gully slider made to show the map (after a load or an undo). */
-function syncGullyInputs(): void {
-  const input = document.getElementById('gullyAuto') as HTMLInputElement | null;
-  if (!input) return;
-  const value = Math.round(doc.gullyAuto * 100);
-  input.value = String(value);
-  text('gullyAutoValue', String(value));
-}
-(document.getElementById('clearGullies') as HTMLButtonElement | null)?.addEventListener('click', () => {
-  if (doc.gullyDabs.length === 0) return;
-  if (!window.confirm(t('confirm.clearGullies'))) return;
-  history.record(doc);
-  doc.clearGullies();
-  updateHistoryButtons();
-  persistence.saveSessionSoon(doc, sessionSettings);
+/**
+ * One writer for each brush number: the slider, the wheel and the bracket
+ * keys all go through these, so the slider, its readout and the ring on the
+ * map never disagree about the brush.
+ */
+const TERRAIN_RADIUS_RANGE = [30, 300] as const;
+const TERRAIN_STRENGTH_RANGE = [1, 160] as const;
+function setTerrainRadius(value: number): void {
+  gameState.set('terrainRadius', clamp(Math.round(value), TERRAIN_RADIUS_RANGE[0], TERRAIN_RADIUS_RANGE[1]), 'raio do pincel');
   requestDraw();
-});
-(document.getElementById('clearFog') as HTMLButtonElement | null)?.addEventListener('click', () => {
-  if (doc.fogDabs.length === 0) return;
-  if (!window.confirm(t('confirm.clearFog'))) return;
-  history.record(doc);
-  doc.clearFog();
-  updateHistoryButtons();
-  persistence.saveSessionSoon(doc, sessionSettings);
+}
+function setTerrainStrength(value: number): void {
+  gameState.set('terrainStrength', clamp(Math.round(value), TERRAIN_STRENGTH_RANGE[0], TERRAIN_STRENGTH_RANGE[1]), 'força do pincel');
   requestDraw();
-});
-
-document.querySelectorAll<HTMLButtonElement>('[data-terrain-mode]').forEach((button) => {
-  button.onclick = () => setTerrainMode((button.dataset['terrainMode'] as BrushMode) ?? 'raise');
-});
-
-// The sky the player sets (Paisagem > Céu e clima): clouds - how many, how
-// high, how thick - and mist. Kept between sessions; heights in metres.
-{
-  // v5: the flat map (the planet was taken out, the player's decision of
-  // 2026-10-08). An older choice is not read.
-  const KEY = 'roadcraft.atmosphere.v5';
-  const ids = ['atmoClouds', 'atmoCloudBase', 'atmoCloudThickness', 'atmoFog', 'atmoFogHeight'] as const;
-  const inputs = ids.map((id) => document.getElementById(id) as HTMLInputElement | null);
-  try {
-    const kept = JSON.parse(localStorage.getItem(KEY) ?? 'null') as Record<string, number> | null;
-    if (kept) ids.forEach((id, i) => { const v = kept[id]; const input = inputs[i]; if (input && Number.isFinite(v)) input.value = String(v); });
-  } catch { /* storage blocked: the defaults */ }
-  const apply = (redraw = true): void => {
-    const value = (i: number): number => Number(inputs[i]?.value ?? 0);
-    ids.forEach((id, i) => text(`${id}Value`, String(value(i))));
-    scene.setAtmosphere({
-      clouds: value(0) / 100,
-      cloudBase: value(1) * UNITS_PER_METER,
-      cloudThickness: value(2) * UNITS_PER_METER,
-      fog: value(3) / 100,
-      fogHeight: value(4) * UNITS_PER_METER,
-    });
-    try { localStorage.setItem(KEY, JSON.stringify(Object.fromEntries(ids.map((id, i) => [id, value(i)])))); } catch { /* not kept */ }
-    // Not at boot: the frame loop is not set up yet then.
-    if (redraw) requestDraw();
-  };
-  for (const input of inputs) if (input) input.oninput = () => apply();
-  // The sky made no clouds of its own any more (every cloud is the map's, to
-  // move or take away): a cover kept from before becomes clouds of the map
-  // where it has none, once, and the setting goes to nought.
-  const cover = Number(inputs[0]?.value ?? 0) / 100;
-  if (cover > 0 && inputs[0]) {
-    if (doc.clouds.length === 0) {
-      const value = (i: number): number => Number(inputs[i]?.value ?? 0);
-      doc.addClouds(scatterClouds(Math.round(cover * 12), {
-        size: Math.max(40, value(2) * UNITS_PER_METER), height: value(1) * UNITS_PER_METER, density: 0.8,
-      }, 0.3, MAP_SIZE / 2, [], Math.random));
-      persistence.saveSessionSoon(doc, sessionSettings);
-    }
-    inputs[0].value = '0';
-  }
-  apply(false);
 }
-
-// The map's biome (`world/ecology.ts`): choosing one gives an old map its
-// ecosystem too; "none" takes it away. Undoable.
-let mapBiomeShown = -1;
-function syncMapBiome(): void {
-  mapBiomeShown = doc.natureRevision;
-  const now = doc.nature?.region ?? 'none';
-  document.querySelectorAll<HTMLButtonElement>('[data-map-biome]').forEach((button) => {
-    const active = button.dataset['mapBiome'] === now;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-pressed', String(active));
-  });
-}
-document.querySelectorAll<HTMLButtonElement>('[data-map-biome]').forEach((button) => {
-  button.onclick = () => {
-    const key = button.dataset['mapBiome'];
-    const next = isRegionId(key) ? { region: key, seed: doc.nature?.seed ?? newNature().seed } : null;
-    if (JSON.stringify(doc.nature) === JSON.stringify(next)) return;
-    history.record(doc);
-    doc.setNature(next);
-    updateHistoryButtons();
-    syncMapBiome();
-    requestDraw();
-  };
-});
-
-const terrainRadiusInput = document.getElementById('terrainRadius') as HTMLInputElement;
-const terrainStrengthInput = document.getElementById('terrainStrength') as HTMLInputElement;
 
 /**
- * One writer for each brush number.
- *
- * The slider used to be the only way to set them, which meant every change of
- * brush size crossed the map to a panel and back. The wheel and the bracket
- * keys now go through the same function, so the slider, the readout and the
- * on-canvas ring can never disagree about the current brush.
+ * A slider of the map's own settings (the fog over the map, the weather, the
+ * gullies of the land): saved with the map, one undo step a drag - recorded
+ * at its first move, `end` at its release.
  */
-function setTerrainRadius(value: number): void {
-  const min = Number(terrainRadiusInput.min);
-  const max = Number(terrainRadiusInput.max);
-  gameState.set('terrainRadius', clamp(Math.round(value), min, max), 'raio do pincel');
-  terrainRadiusInput.value = String(game.terrainRadius);
-  text('terrainRadiusValue', String(game.terrainRadius));
-  requestDraw();
+function mapSlider(min: number, max: number, step: number, get: () => number, set: (v: number) => void): ShellSlider {
+  let recorded = false;
+  return {
+    min, max, step, get,
+    set: (v) => {
+      if (!recorded) { history.record(doc); recorded = true; updateHistoryButtons(); }
+      set(v);
+      persistence.saveSessionSoon(doc, sessionSettings);
+      requestDraw();
+    },
+    end: () => { recorded = false; },
+  };
 }
+/** A slider of a brush, kept between sessions (`ui/toolChoices.ts`): not the map's, no undo. */
+const brushSlider = (min: number, max: number, step: number, get: () => number, set: (v: number) => void): ShellSlider =>
+  ({ min, max, step, get, set: (v) => { set(v); requestDraw(); } });
 
-function setTerrainStrength(value: number): void {
-  const min = Number(terrainStrengthInput.min);
-  const max = Number(terrainStrengthInput.max);
-  gameState.set('terrainStrength', clamp(Math.round(value), min, max), 'força do pincel');
-  terrainStrengthInput.value = String(game.terrainStrength);
-  text('terrainStrengthValue', String(game.terrainStrength));
-  requestDraw();
-}
+// THE WEATHER (Paisagem > Céu, `world/weather.ts`) and the water under the
+// river brush: the map's, one undo step a drag. The thunder is heard at every
+// strike, as late as sound takes to come.
+scene.onStrike((_x, _y, distance) => playThunder(distance / UNITS_PER_METER, doc.weather.thunder));
+const weatherSlider = (key: keyof typeof doc.weather, min: number, max: number, step: number, scale: number): ShellSlider =>
+  mapSlider(min, max, step, () => Math.round(doc.weather[key] * scale * 10) / 10, (v) => doc.setWeather({ [key]: v / scale }));
 
-terrainRadiusInput.oninput = () => setTerrainRadius(Number(terrainRadiusInput.value));
-terrainStrengthInput.oninput = () => setTerrainStrength(Number(terrainStrengthInput.value));
-{
-  // The brush's hardness: a mesa's cliff or a canyon's wall instead of a dome.
-  const input = document.getElementById('terrainHardness') as HTMLInputElement | null;
-  if (input) {
-    input.oninput = () => {
-      gameState.set('terrainHardness', clamp(Math.round(Number(input.value)), 0, 95), 'dureza do pincel');
-      if (hardnessByMode[game.terrainMode] !== undefined) hardnessByMode[game.terrainMode] = game.terrainHardness;
-      text('terrainHardnessValue', String(game.terrainHardness));
-    };
+// The sky the player sets: the mist over everything, and (from before every
+// cloud was the map's) the cloud cover. Kept between sessions; heights in
+// metres. v5: the flat map (the planet was taken out, the player's decision
+// of 2026-10-08). An older choice is not read.
+const ATMOSPHERE_KEY = 'roadcraft.atmosphere.v5';
+const atmosphere = { atmoClouds: 40, atmoCloudBase: 180, atmoCloudThickness: 150, atmoFog: 0, atmoFogHeight: 60 };
+try {
+  const kept = JSON.parse(localStorage.getItem(ATMOSPHERE_KEY) ?? 'null') as Record<string, number> | null;
+  if (kept) {
+    for (const key of Object.keys(atmosphere) as (keyof typeof atmosphere)[]) {
+      const value = kept[key];
+      if (value !== undefined && Number.isFinite(value)) atmosphere[key] = value;
+    }
   }
+} catch { /* storage blocked: the defaults */ }
+function applyAtmosphere(redraw = true): void {
+  scene.setAtmosphere({
+    clouds: atmosphere.atmoClouds / 100,
+    cloudBase: atmosphere.atmoCloudBase * UNITS_PER_METER,
+    cloudThickness: atmosphere.atmoCloudThickness * UNITS_PER_METER,
+    fog: atmosphere.atmoFog / 100,
+    fogHeight: atmosphere.atmoFogHeight * UNITS_PER_METER,
+  });
+  try { localStorage.setItem(ATMOSPHERE_KEY, JSON.stringify(atmosphere)); } catch { /* not kept */ }
+  // Not at boot: the frame loop is not set up yet then.
+  if (redraw) requestDraw();
 }
-(document.getElementById('clearTerrain') as HTMLButtonElement).onclick = () => {
-  if (!window.confirm(t('confirm.clearTerrain'))) return;
+// The sky made no clouds of its own any more (every cloud is the map's, to
+// move or take away): a cover kept from before becomes clouds of the map
+// where it has none, once, and the setting goes to nought.
+if (atmosphere.atmoClouds > 0) {
+  if (doc.clouds.length === 0) {
+    doc.addClouds(scatterClouds(Math.round((atmosphere.atmoClouds / 100) * 12), {
+      size: Math.max(40, atmosphere.atmoCloudThickness * UNITS_PER_METER), height: atmosphere.atmoCloudBase * UNITS_PER_METER, density: 0.8,
+    }, 0.3, MAP_SIZE / 2, [], Math.random));
+    persistence.saveSessionSoon(doc, sessionSettings);
+  }
+  atmosphere.atmoClouds = 0;
+}
+applyAtmosphere(false);
+
+/**
+ * Every slider the interface shows, by name: its range and how the game
+ * reads and takes it. The brushes' are kept between sessions
+ * (`ui/toolChoices.ts`), the map's own are the map's (one undo step a drag).
+ */
+const SLIDERS: Readonly<Record<string, ShellSlider>> = {
+  // The terrain brush (Paisagem > Relevo).
+  terrainRadius: { min: TERRAIN_RADIUS_RANGE[0], max: TERRAIN_RADIUS_RANGE[1], step: 10, get: () => game.terrainRadius, set: setTerrainRadius },
+  terrainStrength: { min: TERRAIN_STRENGTH_RANGE[0], max: TERRAIN_STRENGTH_RANGE[1], step: 1, get: () => game.terrainStrength, set: setTerrainStrength },
+  // The brush's hardness: a mesa's cliff or a canyon's wall instead of a dome; each mode keeps its own.
+  terrainHardness: { min: 0, max: 95, step: 5, get: () => game.terrainHardness, set: (v) => {
+    gameState.set('terrainHardness', clamp(Math.round(v), 0, 95), 'dureza do pincel');
+    if (hardnessByMode[game.terrainMode] !== undefined) hardnessByMode[game.terrainMode] = game.terrainHardness;
+  } },
+  // The gully brush, and how much of the steep land carries gullies of itself (the map's, `world/gullies.ts`).
+  gullyStrength: { min: 5, max: 100, step: 5, get: () => gullyStrength, set: (v) => { gullyStrength = v; } },
+  gullyAuto: mapSlider(0, 100, 5, () => Math.round(doc.gullyAuto * 100), (v) => doc.setGullyAuto(v / 100)),
+  // The water of every river and lake.
+  waterWaves: weatherSlider('waves', 0, 100, 5, 100),
+  waterFoam: weatherSlider('foam', 0, 100, 5, 100),
+  waterCurrent: weatherSlider('current', 0, 4, 0.1, 1),
+  // Rain, wind, lightning and thunder over the whole map.
+  weatherRain: weatherSlider('rain', 0, 100, 5, 100),
+  weatherWind: weatherSlider('wind', 0, 30, 1, 1),
+  weatherWindDir: weatherSlider('windDirection', 0, 355, 5, 1),
+  weatherLightning: weatherSlider('lightning', 0, 30, 1, 1),
+  weatherThunder: weatherSlider('thunder', 0, 100, 5, 100),
+  // The tree brush (`world/trees.ts`).
+  treeDensity: brushSlider(10, 600, 10, () => treeBrush().density, (v) => setTreeBrush({ density: v })),
+  treeHeight: brushSlider(3, 30, 1, () => treeBrush().height, (v) => setTreeBrush({ height: v })),
+  treeVariation: brushSlider(0, 80, 5, () => treeBrush().variation, (v) => setTreeBrush({ variation: v })),
+  treeSpacing: brushSlider(2, 30, 1, () => treeBrush().spacing, (v) => setTreeBrush({ spacing: v })),
+  // The element brush, each kind its own settings (`world/elements.ts`).
+  elDensity: brushSlider(0.1, 200, 0.1, () => elementBrush().density, (v) => setElementBrush({ density: v })),
+  elSize: brushSlider(0.05, 10, 0.05, () => elementBrush().size, (v) => setElementBrush({ size: v })),
+  elVariation: brushSlider(0, 100, 5, () => elementBrush().variation, (v) => setElementBrush({ variation: v })),
+  elSpacing: brushSlider(0, 20, 0.1, () => elementBrush().spacing, (v) => setElementBrush({ spacing: v })),
+  elStrength: brushSlider(5, 100, 5, () => elementBrush().strength, (v) => setElementBrush({ strength: v })),
+  elIntensity: brushSlider(0, 100, 5, () => elementBrush().intensity, (v) => setElementBrush({ intensity: v })),
+  // The cloud tool: the next cloud's size, base and density, and how many "spread over the sky" lays.
+  cloudSize: brushSlider(30, 600, 10, () => cloudBrush().size, (v) => setCloudBrush({ size: v })),
+  cloudHeight: brushSlider(40, 900, 10, () => cloudBrush().height, (v) => setCloudBrush({ height: v })),
+  cloudDensity: brushSlider(10, 100, 5, () => cloudBrush().density, (v) => setCloudBrush({ density: v })),
+  cloudCount: { min: 1, max: 24, step: 1, get: () => cloudScatter.count, set: (v) => { cloudScatter.count = v; } },
+  cloudVariation: { min: 0, max: 80, step: 5, get: () => cloudScatter.variation, set: (v) => { cloudScatter.variation = v; } },
+  // The fog brush: each bank keeps the thickness, height and drift it was laid with (`world/fogPaint.ts`).
+  fogStrength: brushSlider(5, 100, 5, () => fogBrush().strength, (v) => setFogBrush({ strength: v })),
+  fogHeight: brushSlider(2, 160, 2, () => fogBrush().height, (v) => setFogBrush({ height: v })),
+  fogSpeed: brushSlider(0, 24, 0.5, () => fogBrush().speed, (v) => setFogBrush({ speed: v })),
+  // The map's: every bank's thickness at once, and the mist over everything.
+  fogMapDensity: mapSlider(0, 200, 10, () => Math.round(doc.fogSettings.density * 100), (v) => doc.setFogSettings({ density: v / 100 })),
+  atmoFog: { min: 0, max: 100, step: 5, get: () => atmosphere.atmoFog, set: (v) => { atmosphere.atmoFog = v; applyAtmosphere(); } },
+  atmoFogHeight: { min: 5, max: 200, step: 5, get: () => atmosphere.atmoFogHeight, set: (v) => { atmosphere.atmoFogHeight = v; applyAtmosphere(); } },
+  // The simulation: how many cars and how many people on foot come in at the ends of the roads.
+  trafficIntensity: { min: 0, max: MAX_TRAFFIC_COUNT, step: 10, get: () => sim.trafficCount ?? DEFAULT_TRAFFIC_COUNT,
+    set: (v) => { sim.trafficCount = v; persistence.saveSettingsSoon(sessionSettings); } },
+  pedIntensity: { min: 0, max: MAX_PEDESTRIAN_COUNT, step: 10, get: () => sim.pedestrianCount ?? DEFAULT_PEDESTRIAN_COUNT,
+    set: (v) => { sim.pedestrianCount = v; persistence.saveSettingsSoon(sessionSettings); } },
+  // The roundabout tool's radius, metres.
+  roundaboutRadius: { min: ROUNDABOUT_RADIUS_M[0], max: ROUNDABOUT_RADIUS_M[1], step: 4, get: () => Math.round(game.roundaboutRadius / UNITS_PER_METER),
+    set: (v) => { gameState.set('roundaboutRadius', clamp(v, ROUNDABOUT_RADIUS_M[0], ROUNDABOUT_RADIUS_M[1]) * UNITS_PER_METER, 'tamanho da rotatória'); requestDraw(); } },
+};
+// The counts the panel asks for, within the slider's range.
+sim.trafficCount = Math.min(MAX_TRAFFIC_COUNT, sim.trafficCount ?? DEFAULT_TRAFFIC_COUNT);
+sim.pedestrianCount = Math.min(MAX_PEDESTRIAN_COUNT, sim.pedestrianCount ?? DEFAULT_PEDESTRIAN_COUNT);
+
+/** The map's biome (`world/ecology.ts`): one gives an old map its ecosystem too; "none" takes it away. Undoable. */
+function mapBiome(): string {
+  return doc.nature?.region ?? 'none';
+}
+function setMapBiome(key: string): void {
+  const next = isRegionId(key) ? { region: key, seed: doc.nature?.seed ?? newNature().seed } : null;
+  if (JSON.stringify(doc.nature) === JSON.stringify(next)) return;
   history.record(doc);
-  doc.clearTerrain();
+  doc.setNature(next);
+  updateHistoryButtons();
+  requestDraw();
+}
+
+/** One edit of the whole map, asked first and undoable: what each "clear" and "spread" button does. */
+function wholeMapEdit(confirmKey: string | null, edit: () => void): void {
+  if (confirmKey && !window.confirm(t(confirmKey))) return;
+  history.record(doc);
+  edit();
   updateHistoryButtons();
   persistence.saveSessionSoon(doc, sessionSettings);
   requestDraw();
+}
+/**
+ * Clouds spread about the view (`scatterClouds`, which lays them about the
+ * map's middle). On the planet the map's middle is one piece at the atlas's
+ * origin, wherever the player looks: they are laid about the place in the
+ * middle of the view instead, each kept on the chart of the piece it comes
+ * to lie over, and kept apart from the clouds already there, on its chart.
+ */
+function scatterCloudsHere(count: number, like: Parameters<typeof scatterClouds>[1], variation: number,
+  existing: readonly PlacedCloud[]): ReturnType<typeof scatterClouds> {
+  if (!__PLANET__) return scatterClouds(count, like, variation, MAP_SIZE / 2, existing, Math.random);
+  const centre = view.toWorld(surface.cssW / 2, surface.cssH / 2, surface.cssW, surface.cssH);
+  const chart = chartAt(centre.x, centre.y);
+  const near = existing.map((c) => { const q = onChartOf(c, centre); return { ...c, x: q.x - centre.x, y: q.y - centre.y }; });
+  return scatterClouds(count, like, variation, MAP_SIZE / 2, near, Math.random)
+    .map((c) => ({ ...c, ...toOwner(chart, { x: centre.x + c.x, y: centre.y + c.y }) }));
+}
+const MAP_ACTIONS: Readonly<Record<string, () => void>> = {
+  clearTerrain: () => wholeMapEdit('confirm.clearTerrain', () => doc.clearTerrain()),
+  clearGullies: () => { if (doc.gullyDabs.length > 0) wholeMapEdit('confirm.clearGullies', () => doc.clearGullies()); },
+  clearFog: () => { if (doc.fogDabs.length > 0) wholeMapEdit('confirm.clearFog', () => doc.clearFog()); },
+  clearTrees: () => { if (doc.trees.length > 0 || doc.treeClearings.length > 0) wholeMapEdit('confirm.clearTrees', () => doc.clearTrees()); },
+  clearElements: () => { if (doc.elements.length > 0) wholeMapEdit('confirm.clearElements', () => doc.clearElements()); },
+  clearClouds: () => {
+    if (doc.clouds.length > 0) wholeMapEdit('confirm.clearClouds', () => { for (const cloud of [...doc.clouds]) doc.removeCloud(cloud.id); });
+  },
+  // Spread clouds over the sky: as many as asked, about the tool's size,
+  // height and density, varied - each one then to move, set or take away.
+  scatterClouds: () => wholeMapEdit(null, () => {
+    const brush = cloudBrush();
+    const laid = scatterCloudsHere(cloudScatter.count, {
+      size: brush.size * UNITS_PER_METER, height: brush.height * UNITS_PER_METER, density: brush.density / 100,
+    }, cloudScatter.variation / 100, doc.clouds);
+    if (doc.addClouds(laid) < cloudScatter.count) flashHint('hint.cloud.full');
+  }),
 };
 
 /**
@@ -2697,211 +2284,88 @@ function setTool(next: Tool): void {
   requestDraw();
 }
 
-/** The interface of the tool in hand: buttons lit, its palette, its help, the panel's title. */
+/** What follows the tool in hand outside the interface: the pointer's cursor, the Builder's mode, the hint. */
 function showTool(next: Tool): void {
-  // Improving a road, moving its points, splitting a segment and setting up a
-  // junction are things done TO a road, so they are the road's own options and
-  // its button stays lit while one of them is in hand.
-  const roadFamily = next === 'road' || next === 'upgrade' || next === 'split'
-    || next === 'control' || next === 'move' || next === 'roundabout';
-  for (const b of document.querySelectorAll<HTMLButtonElement>('.tool')) {
-    // Inspect is the hand with nothing in it: no button is lit for it.
-    const on = next !== 'inspect' && b.dataset['tool'] === (roadFamily ? 'road' : next);
-    b.classList.toggle('active', on);
-    b.setAttribute('aria-pressed', String(on));
-  }
-  for (const b of document.querySelectorAll<HTMLButtonElement>('.road-op')) {
-    const on = b.dataset['roadOp'] === next && next !== 'road';
-    b.classList.toggle('active', on);
-    b.setAttribute('aria-pressed', String(on));
-  }
   canvas.dataset['tool'] = next;
-  // Each palette is shown only with the tools it configures.
-  const terrainActive = next === 'terrain';
-  roadPalette?.classList.toggle('hidden', !roadFamily);
-  roadPalette?.setAttribute('aria-hidden', String(!roadFamily));
-  if (roadFamily) updateCarousel();
-  roundaboutSettings.hidden = next !== 'roundabout';
-  if (roadFamily) syncRoadModes(next);
-  for (const group of roadPalette?.querySelectorAll<HTMLElement>('.palette-section.plan, .palette-section.lanes') ?? []) {
-    group.style.display = next === 'roundabout' ? 'none' : '';
-  }
-  terrainPalette.classList.toggle('hidden', !terrainActive);
-  terrainPalette.setAttribute('aria-hidden', String(!terrainActive));
-  zonePalette.classList.toggle('hidden', next !== 'zone');
-  zonePalette.setAttribute('aria-hidden', String(next !== 'zone'));
-  // A tool with nothing to configure still fills its panel: with what it does
-  // and every key it answers to. An empty shelf is a defect, not minimalism.
-  renderToolHelp(roadFamily || terrainActive || next === 'zone' || next === 'building' || next === 'person' ? null : next);
-  // The Person Creator fills the panel while it is the tool in hand.
-  renderPanelTitle();
-  // Buildings are a tool, not a mode: the game's own HUD stays up, and the
-  // band's tray swaps to the Builder's categories while it is the tool in hand.
   buildings.workspace.setMode(next === 'building' ? 'builder' : 'road');
-  syncToolPanel();
   updateHint();
 }
 gameState.watch(['tool'], () => showTool(game.tool));
 
-/**
- * The tool panel is shown only while it has something to show: with nothing
- * in hand (Inspect, the tool the game opens on) and nothing picked, it stood
- * open over the map with a page of key bindings.
- */
-function syncToolPanel(): void {
-  const panel = document.querySelector<HTMLElement>('.bw-dock');
-  const inspector = document.getElementById('inspector');
-  if (!panel) return;
-  panel.hidden = game.tool === 'inspect' && (!inspector || inspector.classList.contains('hidden') || inspector.hidden);
-}
-{
-  // Picking a road or a junction to inspect opens the panel; closing it shuts it.
-  const inspector = document.getElementById('inspector');
-  if (inspector) new MutationObserver(() => syncToolPanel()).observe(inspector, { attributes: true, attributeFilter: ['class', 'hidden'] });
-}
-
-
-/** The panel's help card, for the tools that have nothing else to show. */
-const toolHelp = document.createElement('div');
-toolHelp.className = 'tool-help';
-toolHelp.hidden = true;
-let toolHelpFor: Tool | null = null;
-/** Every tool's card ends with the camera, which works the same in all of them. */
-const CAMERA_KEYS = [
-  ['help.key.orbitDrag', 'help.do.orbit'],
-  ['help.key.panDrag', 'help.do.pan'],
-  ['help.key.wheel', 'help.do.zoom'],
-  ['help.key.qe', 'help.do.turn'],
-  ['help.key.home', 'help.do.resetView'],
-] as const;
-const TOOL_KEYS: Partial<Record<Tool, readonly (readonly [string, string])[]>> = {
-  bulldoze: [['help.key.click', 'help.do.remove'], ['help.key.undo', 'help.do.undo']],
-  pole: [['help.key.click', 'help.do.pole'], ['help.key.shiftClick', 'help.do.removePole'], ['help.key.esc', 'help.do.endLine']],
-  streetscape: [['help.key.click', 'help.do.streetscape'], ['help.key.shiftClick', 'help.do.streetscapeRemove']],
-  barrier: [['help.key.click', 'help.do.barrierPoint'], ['help.key.doubleClickEnter', 'help.do.barrierEnd'],
-    ['help.key.backspace', 'help.do.barrierBack'], ['help.key.shiftClick', 'help.do.barrierRemove'], ['help.key.esc', 'help.do.barrierCancel']],
-  inspect: [['help.key.click', 'help.do.pick'], ['help.key.pageUpDown', 'help.do.nodeHeight'], ['help.key.esc', 'help.do.close']],
-};
-function renderToolHelp(forTool: Tool | null): void {
-  toolHelpFor = forTool;
-  toolHelp.hidden = forTool === null;
-  toolHelp.replaceChildren();
-  if (forTool === null) return;
-  const what = document.createElement('p');
-  what.className = 'tool-help-what';
-  what.textContent = t(`help.tool.${forTool}`);
-  const list = document.createElement('dl');
-  list.className = 'tool-help-keys';
-  const section = (key: string): void => {
-    const h = document.createElement('div');
-    h.className = 'tool-help-section';
-    h.textContent = t(key);
-    list.appendChild(h);
-  };
-  const row = ([key, action]: readonly [string, string]): void => {
-    const dt = document.createElement('dt');
-    const kbd = document.createElement('kbd');
-    kbd.textContent = t(key);
-    dt.appendChild(kbd);
-    const dd = document.createElement('dd');
-    dd.textContent = t(action);
-    list.append(dt, dd);
-  };
-  section('help.section.tool');
-  (TOOL_KEYS[forTool] ?? []).forEach(row);
-  if (forTool === 'barrier') {
-    // What is drawn: a fence, a wall or a hedge.
-    const kinds = document.createElement('div');
-    kinds.className = 'tool-help-kinds';
-    for (const kind of BARRIER_KINDS) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'pc-chip' + (kind === game.barrierKind ? ' active' : '');
-      b.dataset['barrier'] = kind;
-      b.textContent = t(`barrier.kind.${kind}`);
-      b.addEventListener('click', () => { gameState.set('barrierKind', kind, 'tipo de cerca'); renderToolHelp('barrier'); });
-      kinds.appendChild(b);
-    }
-    toolHelp.append(what, kinds, list);
-    return;
-  }
-  section('help.section.camera');
-  CAMERA_KEYS.forEach(row);
-  toolHelp.append(what, list);
-}
-/** The name over the panel: the tool in hand, or the road's own option. */
-function renderPanelTitle(): void {
-  buildings.workspace.hosts.title.textContent = t(`tool.${game.tool}`);
+/** The tool a tool's button lights: the road's own options light the road. */
+function heldTool(): Tool {
+  const roadFamily = game.tool === 'road' || game.tool === 'upgrade' || game.tool === 'split'
+    || game.tool === 'control' || game.tool === 'move' || game.tool === 'roundabout';
+  return roadFamily ? 'road' : game.tool;
 }
 
 /**
- * ONE chrome for the whole game.
- *
- * The toolbar, the palettes, the simulation panel and the app menu are the
- * game's own elements - their handlers are wired above - moved into the
- * container's hosts, so there is one place to look for anything and nothing
- * floats over the map. The chrome is up in both modes; `setMode` decides which
- * half fills the container's tiers.
+ * Puts everything down: no tool in hand, nothing picked, no panel. The game
+ * always held some tool (Roads, Terrain...) and its panel stayed on screen;
+ * this is the free hand, where a click on the map inspects what it hits.
  */
-function mountUnifiedChrome(): void {
-  const hosts = buildings.workspace.hosts;
-  const move = (element: Element | null, host: HTMLElement): void => {
-    if (element) host.appendChild(element);
-  };
-  move(document.querySelector('.toolbar'), hosts.level1);
-  move(document.querySelector('.road-palette'), hosts.level2);
-  move(document.getElementById('terrainPalette'), hosts.level2);
-  move(document.getElementById('zonePalette'), hosts.level2);
-  // What Inspect picked is shown in the panel, where the tool's card is: the
-  // right-hand column belongs to the camera and the minimap.
-  move(document.getElementById('inspector'), hosts.level2);
-  move(toolHelp, hosts.level2);
-  renderToolHelp(toolHelpFor);
-  renderPanelTitle();
-  move(document.querySelector('.simulation-controls'), hosts.simMenu);
-  move(document.getElementById('topMenu'), hosts.appMenu);
-  // Pausing is a speed, and every speed is inside the simulation menu: the
-  // bar keeps only the camera. The button itself stays wired to the spacebar.
-  // Demolish and Inspect act on whatever is under the pointer, in any mode:
-  // they are the bar's tools, not modes on the rail. The camera's buttons
-  // join them - a bar of their own floated over the map's corner.
-  move(document.querySelector('.toolbar .tool[data-tool="bulldoze"]'), hosts.controls);
-  move(document.querySelector('.toolbar .tool[data-tool="inspect"]'), hosts.controls);
-  if (UI_V2) {
-    // The camera is one menu of the bar, each button with its name beside it.
-    const cameraControls = document.getElementById('cameraControls');
-    move(cameraControls, hosts.cameraMenu);
-    move(document.getElementById('resetView'), cameraControls ?? hosts.cameraMenu);
-    for (const button of cameraControls?.querySelectorAll<HTMLButtonElement>('button') ?? []) {
-      const name = document.createElement('span');
-      name.className = 'bw-camera-name';
-      name.textContent = button.getAttribute('aria-label') ?? button.title;
-      button.appendChild(name);
-    }
-  } else {
-    move(document.getElementById('cameraControls'), hosts.controls);
-    move(document.getElementById('resetView'), hosts.controls);
-  }
-  // The rail shows icons only; its names live in the tooltips.
-  for (const button of document.querySelectorAll<HTMLButtonElement>('.toolbar .tool, .bw-controls .tool')) {
-    const label = button.querySelector<HTMLElement>('[data-i18n]')?.dataset['i18n'];
-    if (label) button.dataset['i18nTitle'] = label;
-    button.title = `${button.textContent?.trim() ?? ''}${button.dataset['key'] ? ` (${button.dataset['key']})` : ''}`;
-  }
-  // The hint bar is the band's foot line now: floating over the map it landed
-  // on the panel's own last row and the two sentences drew over each other.
-  move(document.getElementById('hint'), hosts.hint);
-  move(document.getElementById('mobileHint'), hosts.hint);
-  document.getElementById('app')?.classList.add('bw-hide-legacy');
-  // The panel starts in the mode of the tool in hand: at boot nothing had set
-  // it, and the Builder's chips stood at the foot of the road panel.
+function freeSelection(): void {
+  if (game.selectedSegment !== null || game.selectedNode !== null) closeInspectorPanel();
+  if (game.tool !== 'inspect') setTool('inspect');
+}
+
+/** A tool button or key: picks the tool, or puts it down when it is already in hand. */
+function pickTool(next: Tool): void {
+  if (next === 'inspect' || next === heldTool()) freeSelection();
+  else setTool(next);
+}
+
+/** The interface's handle: the road inspector's eyedropper opens the road tool through it. */
+let shell: ShellHandle | null = null;
+/**
+ * The interface (`ui/v2/shell.ts`): its HUD, dock, drawer and selection
+ * panel, handed the game's state and its commands. The tools' own settings
+ * are the editor's: handed to the interface here, the one place that may
+ * wire the layers.
+ */
+function mountInterface(): void {
   showTool(game.tool);
-  buildings.workspace.setPanelClose(freeSelection);
-  // The redesigned interface: its own HUD, dock, drawer and selection panel.
-  // The tools' own settings are the editor's: handed to the interface here,
-  // the one place that may wire the two layers.
-  if (UI_V2) mountShell({
+  const isTool = (next: string): next is Tool => (TOOLS as readonly string[]).includes(next);
+  shell = mountShell({
     workspace: buildings.workspace,
+    game: gameState,
+    inspectorPanel: document.getElementById('inspector'),
+    pickTool: (next) => { if (isTool(next)) pickTool(next); },
+    setTool: (next) => { if (isTool(next)) setTool(next); },
+    putDown: freeSelection,
+    setSpeed,
+    undo,
+    redo,
+    newMap,
+    openMap: () => void openMap(),
+    saveMap,
+    about: openAbout,
+    qualityLevels: QUALITY_LEVELS,
+    setQuality,
+    markingStyle: () => doc.markingStyle,
+    setMarkingStyle,
+    setSky,
+    toggleCongestion,
+    camera: cameraCommand,
+    cameraTurns: view.kind !== '2d',
+    roundabout: freeRoadsEnabled(),
+    roadClasses,
+    selectRoadType,
+    setAlignment: (next) => { if (next === 'straight' || next === 'curve' || next === 'free') setAlignment(next); },
+    stepRoadHeight: (d) => roadTool.stepHeight(d),
+    laneChoices,
+    setLanes,
+    setZone,
+    setTerrainMode: (mode) => { if ((BRUSH_MODES as readonly string[]).includes(mode)) setTerrainMode(mode as BrushMode); },
+    setBarrierKind: (kind) => { if ((BARRIER_KINDS as readonly string[]).includes(kind)) gameState.set('barrierKind', kind as BarrierKind, 'tipo de cerca'); },
+    mapBiome,
+    setMapBiome,
+    mapAction: (name) => MAP_ACTIONS[name]?.(),
+    demand: () => sim.demandMultiplier,
+    setDemand,
+    sliders: SLIDERS,
+    onStatus: (listen) => { statusListeners.push(listen); listen(currentStatus()); },
+    onHint: listenHint,
     roadSnap,
     setRoadSnap,
     parkingPresets: ROAD_PARKING_PRESETS,
@@ -2912,9 +2376,6 @@ function mountUnifiedChrome(): void {
     transitTool,
     // Junctions that cannot be built (`Network.impossible`): counted in the
     // top bar, and the first one shown in the inspector on a click.
-    impossibleCount: () => net.impossible.size,
-    // The money in hand (`world/economy.ts`), in the top bar.
-    balance: () => doc.economy.balance,
     showImpossible: () => {
       const id = net.impossible.keys().next().value;
       const node = id === undefined ? undefined : doc.node(id);
@@ -2927,7 +2388,7 @@ function mountUnifiedChrome(): void {
     },
   });
   // The compass in a corner (`ui/v2/compass.ts`): a click faces north, a drag turns and tilts.
-  if (UI_V2 && view.kind !== '2d') {
+  if (view.kind !== '2d') {
     compass = mountCompass(document.querySelector<HTMLElement>('.v2') ?? document.body, {
       north: () => {
         cameraMotion.aim(() => northTurn(view, surface.cssW, surface.cssH));
@@ -2941,49 +2402,17 @@ function mountUnifiedChrome(): void {
     });
   }
 }
-// Mounted after this module has finished evaluating: moving the toolbar and
-// the panels is a layout change, and a pointer already over the canvas can fire
-// a move event mid-evaluation - before the run loop's own state exists.
-setTimeout(mountUnifiedChrome, 0);
-
-document.querySelectorAll<HTMLButtonElement>('.tool').forEach((b) => {
-  b.addEventListener('click', () => pickTool((b.dataset['tool'] as Tool) ?? 'road'));
-});
-
-/** The button a tool lights: the road's own options light the road. */
-function heldTool(): Tool {
-  const roadFamily = game.tool === 'road' || game.tool === 'upgrade' || game.tool === 'split'
-    || game.tool === 'control' || game.tool === 'move' || game.tool === 'roundabout';
-  return roadFamily ? 'road' : game.tool;
+/** The compass in a corner of the interface (`mountInterface`). */
+let compass: Compass | null = null;
+/** Points the compass where north lies on screen: up the map on the flat map, the pole on the planet. */
+function updateCompass(): void {
+  compass?.point(northOnScreen(view, surface.cssW, surface.cssH));
 }
+// Mounted after this module has finished evaluating: building the interface
+// is a layout change, and a pointer already over the canvas can fire a move
+// event mid-evaluation - before the run loop's own state exists.
+setTimeout(mountInterface, 0);
 
-/**
- * Puts everything down: no tool in hand, nothing picked, no panel. The game
- * always held some tool (Roads, Terrain...) and its panel stayed on screen;
- * this is the free hand, where a click on the map inspects what it hits.
- */
-function freeSelection(): void {
-  if (game.selectedSegment !== null || game.selectedNode !== null) {
-    (document.getElementById('closeInspector') as HTMLButtonElement | null)?.click();
-  }
-  if (game.tool !== 'inspect') setTool('inspect');
-}
-
-/** A tool button or key: picks the tool, or puts it down when it is already in hand. */
-function pickTool(next: Tool): void {
-  if (next === 'inspect' || next === heldTool()) freeSelection();
-  else setTool(next);
-}
-/** "Road (R)": each tool's name and key, as its tooltip - the only label a compact rail shows. */
-function labelTools(): void {
-  for (const b of document.querySelectorAll<HTMLButtonElement>('.tool')) {
-    const name = t(`tool.${b.dataset['tool'] ?? 'road'}`);
-    b.title = b.dataset['key'] ? `${name} (${b.dataset['key']})` : name;
-  }
-}
-labelTools();
-
-const trafficButton = document.getElementById('trafficToggle') as HTMLButtonElement;
 function setPaused(paused: boolean): void {
   gameState.set('paused', paused, paused ? 'pausa' : 'simulação retomada');
   sim.clock.paused = paused;
@@ -2991,7 +2420,6 @@ function setPaused(paused: boolean): void {
   persistence.saveSettingsSoon(sessionSettings);
   requestDraw();
 }
-trafficButton.onclick = () => setSpeed(game.paused ? game.speed : 0);
 
 function setSpeed(speed: number): void {
   if (speed <= 0) setPaused(true);
@@ -3002,68 +2430,19 @@ function setSpeed(speed: number): void {
   }
 }
 
-/** The pause button and the speed buttons as the game's state has them ("Pause" lit when paused). */
-function showSpeed(): void {
-  trafficButton.classList.toggle('active', !game.paused);
-  trafficButton.setAttribute('aria-pressed', String(!game.paused));
-  document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((button) => {
-    const active = Number(button.dataset['speed']) === (game.paused ? 0 : game.speed);
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-pressed', String(active));
-  });
-}
-gameState.watch(['paused', 'speed'], showSpeed);
-showSpeed();
-
-document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((button) => {
-  button.onclick = () => setSpeed(Number(button.dataset['speed']));
-});
-
-const trafficIntensity = document.getElementById('trafficIntensity') as HTMLInputElement;
-const pedIntensity = document.getElementById('pedIntensity') as HTMLInputElement;
-// The panel's Traffic and People: how many cars and how many people on foot.
-trafficIntensity.max = String(MAX_TRAFFIC_COUNT);
-pedIntensity.max = String(MAX_PEDESTRIAN_COUNT);
-trafficIntensity.value = String(sim.trafficCount ?? DEFAULT_TRAFFIC_COUNT);
-pedIntensity.value = String(sim.pedestrianCount ?? DEFAULT_PEDESTRIAN_COUNT);
-function bindCount(input: HTMLInputElement, outputId: string, assign: (value: number) => void): void {
-  const update = () => {
-    assign(Number(input.value));
-    text(outputId, input.value);
-    persistence.saveSettingsSoon(sessionSettings);
-  };
-  input.oninput = update;
-  update();
-}
-bindCount(trafficIntensity, 'trafficIntensityValue', (value) => { sim.trafficCount = value; });
-bindCount(pedIntensity, 'pedIntensityValue', (value) => { sim.pedestrianCount = value; });
-const demandLevel = document.getElementById('demandLevel') as HTMLSelectElement;
-demandLevel.value = String(sim.demandMultiplier);
-demandLevel.onchange = () => {
-  sim.demandMultiplier = Number(demandLevel.value);
+/** How much traffic the city asks for: Low, Normal or Peak. */
+function setDemand(value: number): void {
+  if (!Number.isFinite(value) || value <= 0) return;
+  sim.demandMultiplier = value;
   persistence.saveSettingsSoon(sessionSettings);
-};
-document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((button) => {
-  const active = Number(button.dataset['speed']) === (sim.clock.paused ? 0 : sim.clock.speed);
-  button.classList.toggle('active', active);
-  button.setAttribute('aria-pressed', String(active));
-});
+}
 
-const congestionButton = document.getElementById('congestionToggle') as HTMLButtonElement;
-congestionButton.onclick = () => {
+function toggleCongestion(): void {
   gameState.set('congestionOverlay', !game.congestionOverlay, 'mapa de congestionamento');
   persistence.saveSettingsSoon(sessionSettings);
-};
-/** The congestion button as the game's state has it, wherever it was changed from. */
-function showCongestion(): void {
-  congestionButton.classList.toggle('active', game.congestionOverlay);
-  congestionButton.setAttribute('aria-pressed', String(game.congestionOverlay));
 }
-gameState.watch(['congestionOverlay'], showCongestion);
-showCongestion();
-initChrome(requestDraw);
+trackFocusModality();
 onRoadGridChange(requestDraw);
-mountBuildStamp(document.getElementById('buildStamp'));
 mountAbout();
 
 // The weapons lab (`?lab=armas`): a test street, a person always ready, the
@@ -3156,7 +2535,7 @@ function growCity(): void {
 /** Seconds the last generated city took, from the call to its last building (probes). */
 let cityBuiltIn = 0;
 
-(document.getElementById('newMap') as HTMLButtonElement).onclick = () => {
+function newMap(): void {
   if (!window.confirm(t('confirm.newMap'))) return;
   // Discarding the whole map is the largest edit the editor can make, so it is
   // the one that most needs to be undoable. Opening a file already records;
@@ -3167,35 +2546,26 @@ let cityBuiltIn = 0;
   roadTool.reset();
   fitView();
   flashHint('hint.newMap');
-};
-// The sky: always day (the default), always night, or the residents' clock.
-{
-  const SKY_KEY = 'roadcraft.sky';
-  const modes: readonly SkyMode[] = ['day', 'night', 'cycle'];
-  let sky: SkyMode = 'day';
-  try {
-    const saved = localStorage.getItem(SKY_KEY);
-    if (saved && (modes as readonly string[]).includes(saved)) sky = saved as SkyMode;
-  } catch { /* storage blocked: day */ }
-  const button = document.getElementById('skyMode') as HTMLButtonElement;
-  const show = (): void => {
-    button.textContent = t(`sky.${sky}`);
-    button.title = t('sky.title');
-    scene.setSkyMode(sky);
-  };
-  button.onclick = () => {
-    sky = modes[(modes.indexOf(sky) + 1) % modes.length]!;
-    try { localStorage.setItem(SKY_KEY, sky); } catch { /* not kept */ }
-    show();
-    requestDraw();
-  };
-  onLanguageChange(show);
-  show();
 }
-(document.getElementById('saveMap') as HTMLButtonElement).onclick = () => {
+// The sky: always day (the default), always night, or the residents' clock; kept.
+const SKY_KEY = 'roadcraft.sky';
+const SKY_MODES: readonly SkyMode[] = ['day', 'night', 'cycle'];
+function setSky(mode: string): void {
+  if (!(SKY_MODES as readonly string[]).includes(mode)) return;
+  gameState.set('sky', mode as SkyMode, 'céu escolhido');
+  try { localStorage.setItem(SKY_KEY, mode); } catch { /* not kept */ }
+}
+try {
+  const saved = localStorage.getItem(SKY_KEY);
+  if (saved && (SKY_MODES as readonly string[]).includes(saved)) gameState.set('sky', saved as SkyMode, 'preferência guardada');
+} catch { /* storage blocked: day */ }
+gameState.watch(['sky'], () => { scene.setSkyMode(game.sky); requestDraw(); });
+scene.setSkyMode(game.sky);
+
+function saveMap(): void {
   exportToFile(doc, sessionSettings());
   flashHint('hint.saved');
-};
+}
 /**
  * Loads a picked map. The undo entry is recorded only once the map has
  * actually loaded: recording first left a bogus step (and cleared redo) when
@@ -3222,9 +2592,9 @@ function openImported(result: ImportResult): boolean {
   flashHint('hint.opened');
   return true;
 }
-(document.getElementById('openMap') as HTMLButtonElement).onclick = async () => {
+async function openMap(): Promise<void> {
   openImported(await importFromFile());
-};
+}
 
 // Perspective or the isometric (orthographic) view, the player's choice, kept.
 // Perspective unless the player turns the isometric view on (the player,
@@ -3235,10 +2605,9 @@ function setPerspective(on: boolean): void {
   gameState.set('perspective', on, 'câmera');
   try { localStorage.setItem(PERSPECTIVE_KEY, on ? '1' : '0'); } catch { /* not kept */ }
 }
-/** The camera and its button as the game's state has it. */
+/** The camera as the game's state has it. */
 function showPerspective(): void {
   scene.setPerspective(game.perspective);
-  document.getElementById('perspectiveToggle')?.setAttribute('aria-pressed', String(game.perspective));
 }
 gameState.watch(['perspective'], showPerspective);
 // At boot, once the whole file has run: switching the camera asks for a
@@ -3250,52 +2619,25 @@ queueMicrotask(() => {
   showPerspective();
 });
 
-// The camera's own buttons: a step per press, and the needle keeps north.
-const cameraNeedle = document.querySelector<SVGElement>('#cameraControls .camera-needle');
+/** The camera menu's buttons: a step per press; north and reset put the camera back (reset frames the map too). */
 const TILT_STEP = Math.PI / 18;
-for (const button of document.querySelectorAll<HTMLButtonElement>('#cameraControls [data-camera]')) {
-  button.addEventListener('click', () => {
-    switch (button.dataset['camera']) {
-      case 'turnLeft': view.orbit(-KEY_TURN, 0); break;
-      case 'turnRight': view.orbit(KEY_TURN, 0); break;
-      case 'tiltUp': view.orbit(0, TILT_STEP); break;
-      case 'tiltDown': view.orbit(0, -TILT_STEP); break;
-      case 'north': view.setOrbit(DEFAULT_AZIMUTH, DEFAULT_ELEVATION); break;
-      case 'perspective': setPerspective(!game.perspective); break;
-    }
-    persistence.saveSettingsSoon(sessionSettings);
-    requestDraw();
-  });
-}
-// A flat view has nothing to turn or tilt.
-if (view.kind === '2d') (document.getElementById('cameraControls') as HTMLElement).style.display = 'none';
-let needleAngle = NaN;
-/** The compass in a corner of the v2 interface (`mountUnifiedChrome`). */
-let compass: Compass | null = null;
-/** Points the needles where north lies on screen: up the map on the flat map, the pole on the planet. */
-function updateCameraNeedle(): void {
-  if (!cameraNeedle && !compass) return;
-  const north = northOnScreen(view, surface.cssW, surface.cssH);
-  compass?.point(north);
-  if (!cameraNeedle) return;
-  const angle = Math.round((north * 180) / Math.PI);
-  if (angle === needleAngle) return;
-  needleAngle = angle;
-  cameraNeedle.style.transform = `rotate(${angle}deg)`;
-}
-
-(document.getElementById('resetView') as HTMLButtonElement).onclick = () => {
-  view.setOrbit(DEFAULT_AZIMUTH, DEFAULT_ELEVATION);
-  fitView();
+function cameraCommand(command: string): void {
+  switch (command) {
+    case 'turnLeft': view.orbit(-KEY_TURN, 0); break;
+    case 'turnRight': view.orbit(KEY_TURN, 0); break;
+    case 'tiltUp': view.orbit(0, TILT_STEP); break;
+    case 'tiltDown': view.orbit(0, -TILT_STEP); break;
+    case 'north': view.setOrbit(DEFAULT_AZIMUTH, DEFAULT_ELEVATION); break;
+    case 'perspective': setPerspective(!game.perspective); break;
+    case 'reset': view.setOrbit(DEFAULT_AZIMUTH, DEFAULT_ELEVATION); fitView(); break;
+    default: return;
+  }
   persistence.saveSettingsSoon(sessionSettings);
   requestDraw();
-};
+}
 
-const undoButton = document.getElementById('undoAction') as HTMLButtonElement;
-const redoButton = document.getElementById('redoAction') as HTMLButtonElement;
-// An undo can change something far off screen, so the hint bar says it
-// happened; Ctrl+Z and Ctrl+Y go through these buttons too.
-undoButton.onclick = () => {
+// An undo can change something far off screen, so the game says it happened.
+function undo(): void {
   // A drag or stroke in progress ends first: undoing mid-drag used to go on
   // moving a node of the restored map, and record the half-done state as redo.
   cancelGestures();
@@ -3304,20 +2646,20 @@ undoButton.onclick = () => {
   applySnapshot(snapshot);
   doc.changes.causeNext('jogo');
   if (snapshot) flashHint('hint.undone');
-};
-redoButton.onclick = () => {
+}
+function redo(): void {
   cancelGestures();
   doc.changes.causeNext('refazer');
   const snapshot = history.redo(doc);
   applySnapshot(snapshot);
   doc.changes.causeNext('jogo');
   if (snapshot) flashHint('hint.redone');
-};
+}
 
+/** Whether there is something to undo and to redo, in the game's state. */
 function updateHistoryButtons(): void {
-  undoButton.disabled = !history.canUndo;
-  redoButton.disabled = !history.canRedo;
-  buildings.workspace.setHistory(history.canUndo, history.canRedo);
+  gameState.set('canUndo', history.canUndo, 'histórico');
+  gameState.set('canRedo', history.canRedo, 'histórico');
 }
 
 /** Restores the user-visible state stored beside a map without touching topology. */
@@ -3336,30 +2678,28 @@ function restoreSettings(settings: SavedSettings): void {
   setPaused(settings.paused);
   sim.trafficIntensity = settings.trafficIntensity;
   sim.pedestrianIntensity = settings.pedestrianIntensity;
-  sim.trafficCount = settings.cars ?? DEFAULT_TRAFFIC_COUNT;
-  sim.pedestrianCount = settings.people ?? DEFAULT_PEDESTRIAN_COUNT;
-  trafficIntensity.value = String(sim.trafficCount);
-  pedIntensity.value = String(sim.pedestrianCount);
+  sim.trafficCount = Math.min(MAX_TRAFFIC_COUNT, settings.cars ?? DEFAULT_TRAFFIC_COUNT);
+  sim.pedestrianCount = Math.min(MAX_PEDESTRIAN_COUNT, settings.people ?? DEFAULT_PEDESTRIAN_COUNT);
   sim.demandMultiplier = settings.demandMultiplier ?? 1;
-  demandLevel.value = String(sim.demandMultiplier);
-  text('trafficIntensityValue', trafficIntensity.value);
-  text('pedIntensityValue', pedIntensity.value);
   gameState.set('congestionOverlay', settings.congestionOverlay, 'mapa carregado');
-  document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((button) => {
-    const active = Number(button.dataset['speed']) === (sim.clock.paused ? 0 : sim.clock.speed);
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-pressed', String(active));
-  });
   persistence.saveSettingsSoon(sessionSettings);
   requestDraw();
 }
 updateHistoryButtons();
 
-(document.getElementById('closeInspector') as HTMLButtonElement).onclick = () => {
+/** The road inspector closed (its × , Escape, Delete): nothing picked. */
+function closeInspectorPanel(): void {
   select(null, game.selectedSegmentS, null, 'inspetor fechado');
   closeInspector();
   requestDraw();
-};
+}
+(document.getElementById('closeInspector') as HTMLButtonElement).onclick = closeInspectorPanel;
+/** Closes the road inspector's panel (`ui/inspector.ts`). */
+function closeInspector(): void {
+  hideInspector();
+}
+// Open or closed, by a command or by itself (what it showed is gone): in the game's state.
+onInspectorChange((open) => gameState.set('inspectorOpen', open, open ? 'inspetor aberto' : 'inspetor fechado'));
 
 /**
  * Junction control, as a tool rather than as a form field.
@@ -3406,36 +2746,22 @@ function cycleNodeControl(id: NodeId, direction: 1 | -1): void {
   flashHint(`control.${next}`);
 }
 
+/** Who shows the tool's hint and the game's answers (the interface, `onHint`). */
+const hintListeners: ((text: string, flash: boolean) => void)[] = [];
+/** The answers said before anyone listened (a map that failed to open at boot): told to the first listener. */
+const earlyFlashes: string[] = [];
 /**
- * A transient message in the hint bar.
- *
- * It reuses the hint rather than adding a toast, because the player's eyes are
- * already there and a second floating panel over an isometric map costs more
- * than it tells. `updateHint` restores the tool's own wording, so the timer
- * never has to remember what was displaced.
+ * A transient answer of the game - saved, refused, undone, a road that
+ * cannot be laid - shown a moment by the interface over the dock.
  */
-let hintFlash: ReturnType<typeof setTimeout> | null = null;
 function flashHint(key: string, params?: Readonly<Record<string, string | number>>): void {
-  // Both bars: on a phone only the touch hint is visible, and it used to miss
-  // every one of these answers.
-  const hints = ['hint', 'mobileHint']
-    .map((id) => document.getElementById(id))
-    .filter((el): el is HTMLElement => el !== null);
-  for (const hint of hints) {
-    hint.textContent = t(key, params);
-    delete hint.dataset['i18n'];
-    hint.classList.add('flash');
-  }
-  if (hintFlash !== null) clearTimeout(hintFlash);
-  hintFlash = setTimeout(() => {
-    hintFlash = null;
-    for (const hint of hints) hint.classList.remove('flash');
-    updateHint();
-  }, 1600);
+  const text = t(key, params);
+  if (hintListeners.length === 0) earlyFlashes.push(text);
+  for (const listen of hintListeners) listen(text, true);
 }
 
 /**
- * The hint bar, in both the desktop and the touch wording.
+ * The tool's hint: what a click does now.
  *
  * The key is derived from the tool and its current mode rather than chosen from
  * a table of sentences, so adding a language is a dictionary entry and adding a
@@ -3451,46 +2777,21 @@ function hintKey(prefix: string): string {
   return `${prefix}.${game.tool}`;
 }
 
+let hintShown = '';
 function updateHint(): void {
-  const hint = document.getElementById('hint');
-  const mobileHint = document.getElementById('mobileHint');
-  if (hint) {
-    const key = hintKey('hint');
-    hint.dataset['i18n'] = key;
-    hint.textContent = t(key);
-  }
-  if (mobileHint) {
-    // A tool without touch wording of its own falls back to the desktop
-    // sentence. The Builder has none, and the bar (and every screen reader,
-    // through the canvas's aria-describedby) used to read the raw key.
-    const touch = hintKey('hint.mobile');
-    const key = hasKey(touch) ? touch : hintKey('hint');
-    mobileHint.dataset['i18n'] = key;
-    mobileHint.textContent = t(key);
-  }
+  const text = t(hintKey('hint'));
+  if (text === hintShown) return;
+  hintShown = text;
+  for (const listen of hintListeners) listen(text, false);
 }
-updateHint();
+/** A listener of the hint: told the hint now, and any answer said before it came. */
+function listenHint(listen: (text: string, flash: boolean) => void): void {
+  hintListeners.push(listen);
+  hintShown = t(hintKey('hint'));
+  listen(hintShown, false);
+  for (const text of earlyFlashes.splice(0)) listen(text, true);
+}
 if (bootFailed) flashHint('hint.bootFailed');
-
-// ------------------------------------------------------------- minimap
-minimapCanvas.addEventListener('pointerdown', (e) => {
-  minimapCanvas.setPointerCapture(e.pointerId);
-  const p = minimapToWorld(minimapCanvas, doc, camera, e.clientX, e.clientY);
-  if (p) {
-    // Through the seam: writing the flat camera moves nothing under the 3D (three.js) viewport.
-    view.moveTo(p);
-    requestDraw();
-  }
-});
-minimapCanvas.addEventListener('pointermove', (e) => {
-  if (e.buttons === 0) return;
-  const p = minimapToWorld(minimapCanvas, doc, camera, e.clientX, e.clientY);
-  if (p) {
-    // Through the seam: writing the flat camera moves nothing under the 3D (three.js) viewport.
-    view.moveTo(p);
-    requestDraw();
-  }
-});
 
 /**
  * Arrow-key panning, through the seam and bound to the WINDOW.
@@ -3513,7 +2814,7 @@ const arrowPan = (e: KeyboardEvent): void => {
       e.preventDefault();
     } else if (game.selectedSegment !== null || game.selectedNode !== null) {
       // With nothing being drawn, Escape puts down what Inspect picked up.
-      (document.getElementById('closeInspector') as HTMLButtonElement).click();
+      closeInspectorPanel();
       e.preventDefault();
     } else if (game.tool !== 'inspect') {
       // ...and then the tool itself: the free hand.
@@ -3544,10 +2845,8 @@ window.addEventListener('blur', () => cameraMotion.releaseAll());
 // ------------------------------------------------------------- run loop
 /** The frame asked for, and the time between frames (`frameLoop.ts`). */
 const frameClock = new FrameClock(frame, () => booted && scene.opening);
-// Due on the first frame: the loop stops once nothing moves, and a paused map
-// kept the page's initial readout ("0 roads · 0 nodes") and a blank minimap.
-/** The minimap: ten times a second, never every frame, panning included. */
-const minimapDue = new Periodic(0.1);
+/** The flat camera kept up with the view (what the tools measure their pixels with): ten times a second. */
+const flatCameraDue = new Periodic(0.1);
 /** The status bar, the inspector, the simulation's checks. */
 const panelsDue = new Periodic(0.4);
 /** The conflict zones measured since, kept for the next session (`keptZones`). */
@@ -3631,8 +2930,6 @@ function frame(now: number): void {
   beginFrameWork();
   // Everyone watching the game's state is told what changed, once, here.
   gameState.flush();
-  // The map's biome shown as it is after an undo, a load or a new map.
-  if (doc.natureRevision !== mapBiomeShown) syncMapBiome();
   frameTimer.mark('painéis');
   const wall = frameClock.tick(now);
   // The camera's glide: keys held, the wheel's notches being spent.
@@ -3699,31 +2996,15 @@ function frame(now: number): void {
   frameTimer.mark('desenho');
   drawnOnce = true;
   drawOverlayScreen();
-  updateCameraNeedle();
+  updateCompass();
   frameTimer.mark('sobreposição');
   if (topologyAfterDraw) {
     topologyAfterDraw = false;
     requestDraw();
   }
 
-  // TEN TIMES A SECOND, AND NO FASTER — panning included.
-  //
-  // `drawMinimap` walks every lanelet in the simulation and every ribbon in the
-  // network on each call, and the clause that used to sit here forced it to run
-  // on EVERY FRAME while panning, pinching, drafting or dragging a node. So the
-  // one moment the main canvas most needs the frame budget — the camera moving
-  // under the user's hand — was the moment a full sweep of the map was billed
-  // to it as well, and the bigger the map the worse it got. That is the stall
-  // felt on pan and zoom.
-  //
-  // A 194-by-124 overview does not need sixty updates a second. The clock alone
-  // now decides, so the cost is bounded no matter what the pointer is doing.
   if (ZONES_PREFIX && zonesDue.due(wall)) writeDerivedMany(ZONES_PREFIX, sim.conflicts.takeMeasured());
-  if (minimapDue.due(wall)) {
-    syncFlatCameraFromView();
-    drawMinimap(minimapCanvas, doc, net, sim, camera, surface, viewFootprint());
-  }
-  frameTimer.mark('minimapa');
+  if (flatCameraDue.due(wall)) syncFlatCameraFromView();
 
   if (panelsDue.due(wall)) {
     updateStatus();
@@ -4179,7 +3460,7 @@ function drawOverlayScreen(): void {
     // a heavier brush visibly bites deeper. Scaled against the slider's own
     // range, not against a hard-coded 10: a ring drawn past the outer one is
     // not a heavier bite, it is a second radius the brush does not have.
-    const strengthMax = Number(terrainStrengthInput.max) || 40;
+    const strengthMax = TERRAIN_STRENGTH_RANGE[1];
     const bite = 0.3 + 0.35 * (game.terrainStrength / strengthMax);
     ctx.setLineDash([]);
     ctx.globalAlpha = 0.65;
@@ -4704,9 +3985,8 @@ function showInspector(): void {
       },
       // The eyedropper: the road tool in hand, drawing with the profile just picked.
       onDrawWithProfile: () => {
-        // Through the interface's own Roads button, so its panel opens showing the profile picked.
-        const roads = document.querySelector<HTMLButtonElement>('[data-cat="roads"]') ?? document.querySelector<HTMLButtonElement>('.tool[data-tool="road"]');
-        roads?.click();
+        // The road tool's panel opened, showing the profile picked.
+        shell?.openTool('road');
         flashHint('hint.profile.picked');
       },
       onSetSection: (id, section) => {
@@ -4762,6 +4042,21 @@ function showInspector(): void {
           select(null, null, placed, 'ponto inserido na via');
           showInspector();
         }
+      },
+      onAddUturn: (id, toward) => {
+        if (!doc.segment(id)) return;
+        const chosen = game.selectedSegment === id && game.selectedSegmentS !== null ? game.selectedSegmentS : undefined;
+        let placed: NodeId | null = null;
+        mutateRoads(() => {
+          const result = commitUturn(doc, net, id, toward, chosen);
+          if (!result.committed) {
+            flashHint(`hint.uturn.${result.reason}`);
+            return false;
+          }
+          placed = result.node;
+          return true;
+        });
+        if (placed !== null) flashHint('hint.uturn.placed');
       },
       onRemoveCrossing: (node) => {
         mutate(() => {
@@ -4884,12 +4179,10 @@ function duplicateSelectedSegment(id = game.selectedSegment): void {
   }
 }
 
-function updateStatus(): void {
-  text('roadCount', roadCountLabel(doc.segments.size));
-  text('nodeCount', nodeCountLabel(doc.nodes.size));
-  // The cars driving into and out of the lots' bays are cars driving too (`sim/agents/lotTraffic.ts`).
-  text('vehicleCount', vehicleCountLabel(sim.vehicles.size + sim.city.lots.moving()));
-  text('pedCount', peopleCountLabel(sim.pedViews.length));
+/** Who shows the city's numbers (the interface, `onStatus`). */
+const statusListeners: ((status: ShellStatus) => void)[] = [];
+/** The city's numbers now: the clock, the traffic, the money, the junctions that cannot be built. */
+function currentStatus(): ShellStatus {
   // The time of day and the residents' day (`sim/city`). On the planet the
   // sun stands over the planet, so the clock reads the time it makes where
   // the view looks (`world/planet/sun.ts`), as the sky there shows it.
@@ -4899,38 +4192,31 @@ function updateStatus(): void {
   const minutes = looked
     ? planetLocalMinutes(sim.city.minutes(sim), looked.x, looked.y)
     : sim.city.minutes(sim) % 1440;
-  text('cityClock', `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(Math.floor(minutes % 60)).padStart(2, '0')}`);
-  // The city's numbers, computed all along and shown nowhere (audit P2-02).
-  text('metricTrips', String(sim.completedTrips));
-  text('metricLost', String(sim.entryDemandLost));
   let speedSum = 0;
   let queued = 0;
   for (const v of sim.vehicles.values()) {
     speedSum += v.v;
     if (v.v < 0.5) queued++;
   }
-  text('metricSpeed', sim.vehicles.size ? `${Math.round((speedSum / sim.vehicles.size) * METERS_PER_UNIT * 3.6)} km/h` : '—');
-  text('metricQueued', String(queued));
-  text('zoomReadout', `${Math.round(view.zoom * 100)}%`);
-  // From the seam, not the flat camera: under 3D that one never moves, so
-  // the readout sat frozen at its start position through every pan and zoom.
-  const centre = view.centre;
-  text('coordReadout', `X ${Math.round(centre.x)} · Y ${Math.round(centre.y)}`);
-
-  const el = document.getElementById('auditReadout');
-  if (!el) return;
-
-  const counts = summarize(sim.issues);
-  const audit = counts.size === 0 ? t('status.clear') : [...counts].map(([code, n]) => `${code}×${n}`).slice(0, 2).join(' · ');
-  const tone = counts.size === 0 ? 'good' : 'bad';
-  if (el.textContent !== audit) el.textContent = audit;
-  if (el.className !== tone) el.className = tone;
+  return {
+    clock: `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(Math.floor(minutes % 60)).padStart(2, '0')}`,
+    // The cars driving into and out of the lots' bays are cars driving too (`sim/agents/lotTraffic.ts`).
+    vehicles: vehicleCountLabel(sim.vehicles.size + sim.city.lots.moving()),
+    people: peopleCountLabel(sim.pedViews.length),
+    // The city's numbers, computed all along and shown nowhere (audit P2-02).
+    trips: String(sim.completedTrips),
+    lost: String(sim.entryDemandLost),
+    meanSpeed: sim.vehicles.size ? `${Math.round((speedSum / sim.vehicles.size) * METERS_PER_UNIT * 3.6)} km/h` : '—',
+    queued: String(queued),
+    impossible: net.impossible.size,
+    balance: doc.economy.balance,
+  };
 }
-
-/** Writes a readout only when it changed: `updateStatus` runs every few frames, and each write was a DOM mutation the interface then had to read back. */
-function text(id: string, value: string): void {
-  const el = document.getElementById(id);
-  if (el && el.textContent !== value) el.textContent = value;
+/** Tells the interface the city's numbers (a few times a second while the city runs, and after an edit). */
+function updateStatus(): void {
+  if (statusListeners.length === 0) return;
+  const status = currentStatus();
+  for (const listen of statusListeners) listen(status);
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -4960,40 +4246,18 @@ persistence.onSaveFailed = () => {
 
 requestDraw();
 
-// Refresh the readouts once, explicitly. The loop stops as soon as nothing is
-// moving, so its UI work cannot be the only place that runs it: a map that
-// loads paused ended the loop before the first status pass and kept the initial
-// HTML for ever. Measured on an all-combinations map of 32 roads and 47 nodes:
-// the roads drew, the status bar read "0 roads · 0 nodes", and the minimap was
-// never resized from its default 300x150.
-updateStatus();
+// The flat camera put where the view is before the first frame (the loop
+// stops as soon as nothing moves, so the frame cannot be the only place).
 syncFlatCameraFromView();
-drawMinimap(minimapCanvas, doc, net, sim, camera, surface, viewFootprint());
 
 // ------------------------------------------------------------- language & quality
-
-const languageSelect = document.getElementById('languageSelect') as HTMLSelectElement;
-for (const spec of LANGUAGES) {
-  const option = document.createElement('option');
-  option.value = spec.code;
-  option.textContent = spec.label;
-  languageSelect.appendChild(option);
-}
-languageSelect.value = language();
-languageSelect.onchange = () => {
-  const value = languageSelect.value;
-  if (value === 'en' || value === 'pt-BR') setLanguage(value);
-};
 
 // Anything rendered from script rather than from markup has to be re-rendered
 // when the language changes; `applyTranslations` only reaches elements that
 // carry a key, and these were built by hand.
 onLanguageChange(() => {
-  refreshRoadTypeLabels();
-  labelTools();
-  renderToolHelp(toolHelpFor);
-  renderPanelTitle();
   buildings.languageChanged();
+  hintShown = '';
   updateHint();
   updateStatus();
   refreshInspector();
@@ -5004,19 +4268,15 @@ onLanguageChange(() => {
  * The map's road paint (docs/VIAS.md V6, `world/roads/markingStyle.ts`): a
  * property of the map, saved with it and undone like any edit.
  */
-const paintStyleSelect = document.getElementById('paintStyleSelect') as HTMLSelectElement;
-paintStyleSelect.value = doc.markingStyle;
-paintStyleSelect.onchange = () => {
-  const value = paintStyleSelect.value;
+function setMarkingStyle(value: string): void {
   if (!isMarkingStyle(value) || value === doc.markingStyle) return;
   history.record(doc);
   doc.setMarkingStyle(value);
   persistence.saveSessionSoon(doc, sessionSettings);
   updateHistoryButtons();
   requestDraw();
-};
+}
 
-const qualitySelect = document.getElementById('qualitySelect') as HTMLSelectElement;
 const QUALITY_STORAGE_KEY = 'roadcraft.quality';
 const savedQuality = (() => {
   try {
@@ -5025,10 +4285,8 @@ const savedQuality = (() => {
     return null;
   }
 })();
-qualitySelect.value = isQualityLevel(savedQuality) ? savedQuality : 'high';
-gameState.set('quality', qualitySelect.value, 'preferência guardada');
-qualitySelect.onchange = () => {
-  const value = qualitySelect.value;
+gameState.set('quality', isQualityLevel(savedQuality) ? savedQuality : 'high', 'preferência guardada');
+function setQuality(value: string): void {
   if (!isQualityLevel(value)) return;
   gameState.set('quality', value, 'menu de qualidade');
   scene.setQuality(value);
@@ -5038,7 +4296,7 @@ qualitySelect.onchange = () => {
     // Not remembering the choice is not a reason to refuse it.
   }
   requestDraw();
-};
+}
 /**
  * The game's state in the console (`core/gameState.ts`): `__state()` its
  * values now and the last changes - what, from what to what, why - newest first.
@@ -5119,7 +4377,7 @@ mountHealthPanel({
   /** The public transport tool, for the probes (`scripts/transit-shots.mjs`). */
   transit: transitEditor,
   setTraffic: (enabled: boolean) => {
-    if (!game.paused !== enabled) trafficButton.click();
+    if (!game.paused !== enabled) setSpeed(game.paused ? game.speed : 0);
   },
   setRoadHeight: (metres: number) => {
     roadTool.heightChosen(metres * UNITS_PER_METER);

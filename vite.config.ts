@@ -24,6 +24,12 @@ export default defineConfig(({ mode }) => ({
     __PLANET__: JSON.stringify(mode === 'planet'),
   },
   publicDir: false,
+  // The dependencies are found from the game's own pages only. By default
+  // Vite crawls every `.html` under the root (vite.dev/config/
+  // dep-optimization-options), and the labs' apps (`labs/building/forma`)
+  // import packages installed only in their own folder: the crawl failed,
+  // pre-bundling was skipped, and the first load answered 504 and reloaded.
+  optimizeDeps: { entries: ['*.html'] },
   resolve: {
     alias: {
       '@core': r('./src/core'),

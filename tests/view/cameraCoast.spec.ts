@@ -24,6 +24,7 @@ function view(globe: number, scale: number) {
     panTo: () => {},
     orbit: () => {},
     toWorldAt: () => ({ x: 0, y: 0 }),
+    holds: () => true,
   } as unknown as Viewport;
   return { v, slid: () => slid };
 }

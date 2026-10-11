@@ -387,6 +387,17 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   saída nem entrada do mapa (`RoadDoc.mapEdge`). O que estava em pé na pista do balão (poste, banco) sai
   no mesmo passo (`clearBulbs`). Detectores: `tests/world/bulb.spec.ts`, `tests/sim/bulb.spec.ts`. Visto no
   jogo (5173): círculo, meio-fio, calçada, poste removido; a volta dos carros vista só na simulação.
+- Retorno no canteiro (peça do jogador, 2026-10-10): no inspetor de uma via de mão dupla com canteiro,
+  "Retorno para quem vai à ponta final / inicial" (`editor/streetObjects.ts` `commitUturn`; `RoadNode.uturn` é
+  a via de onde chega quem volta). Um sentido por abertura: dois retornos frente a frente, cada um esperando na
+  ponta da sua faixa interna, ficavam dentro do semicírculo um do outro (impasse medido). Caminho próprio
+  (`turnPaths.ts` `medianUturnPath`): semicírculo da faixa interna à do outro sentido, aceito só para quem gira
+  nesse raio (AASHTO, linha de centro: carro 6,4 m, ônibus 11,5 m, caminhão 11,6 m; FHWA: carro precisa de
+  12,8 m de faixa a faixa) e cabe na pista. O bulevar padrão (canteiro de 2 m) recusa com o motivo; com canteiro
+  de 5 m carros dão a volta. Abertura do canteiro de 10 m do lado para onde o semicírculo avança
+  (`landscape.ts` `medianNose`). Detectores: `tests/editor/uturn.spec.ts`, `tests/sim/uturn.spec.ts`. Visto no
+  jogo (servidor de conferência com o HEAD e o retorno, 2026-10-10): abertura no canteiro, moto e SUV dando a
+  volta, até 16,8 km/h na saída. Falta: o "loon" (alargamento do lado de lá) para canteiros estreitos.
 - Conta-gotas: no inspetor da via, "Desenhar com este perfil" passa a via como ela está para a ferramenta de vias (abre o
   painel de vias com o cartão "Via copiada" escolhido; um perfil em mãos que não é nenhum cartão aparece sempre como
   primeiro cartão, `catalogPanel.ts`).
