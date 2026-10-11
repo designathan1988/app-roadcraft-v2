@@ -3,8 +3,9 @@ import { planetLocalMinutes } from '@world/planet/sun';
 import { hasTransit } from '@world/transit';
 import { mountCompass, northOnScreen, northTurn, type Compass } from '@ui/v2/compass';
 import { gestureChart, ownPoint } from './editor/planetFrame';
-import { atlasToSphereInto, chartAt, onChartOf, toOwner } from '@world/planet/charts';
+import { atlasToSphereInto, chartAt, onChartOf, setGridOrigin, toOwner } from '@world/planet/charts';
 import { SEA_LEVEL, earthHeight } from '@world/planet/relief';
+import { PLANET_RADIUS } from '@core/cubeSphere';
 import { flipProfile, streetChain } from '@world/roads/streetChain';
 import { furnitureChosen } from '@ui/roads/furnitureChoice';
 import { isMarkingStyle } from '@world/roads/markingStyle';
@@ -668,6 +669,58 @@ primeSurfaceBake(await surfaceBake);
 sim.conflicts.seed(await keptZones);
 const scene: SceneHandle = createSceneRenderer(canvas3d, { x: camera.x, y: camera.y }, camera.zoom, savedQualityLevel(), requestDraw);
 
+// ------------------------------------------------------------- the local grid
+// The planet's grid has its origin where the town in view was started
+// (`world/planet/charts.ts` setGridOrigin; the map keeps them, `doc.gridOrigins`):
+// the nearest one within `GRID_REACH` of the view. Away from all of them a
+// provisional origin stands where the view came in, kept while the view stays
+// within reach of it, and saved with the map once something is built near it.
+const GRID_REACH = PLANET_RADIUS * 0.3;
+let gridProvisional: { x: number; y: number } | null = null;
+let gridActive: { x: number; y: number } | null = null;
+let gridCheckedAt = -Infinity;
+let gridDocSeen = -1;
+const gridA = { x: 0, y: 0, z: 0 }, gridB = { x: 0, y: 0, z: 0 };
+const groundApart = (p: { x: number; y: number }, q: { x: number; y: number }): number => {
+  atlasToSphereInto(p.x, p.y, gridA);
+  atlasToSphereInto(q.x, q.y, gridB);
+  const c = Math.max(-1, Math.min(1, gridA.x * gridB.x + gridA.y * gridB.y + gridA.z * gridB.z));
+  return Math.acos(c) * PLANET_RADIUS;
+};
+function chooseGridOrigin(now: number): void {
+  if (!__PLANET__ || now - gridCheckedAt < 250) return;
+  gridCheckedAt = now;
+  const centre = view.centre;
+  const at = { x: centre.x, y: centre.y };
+  let best: { x: number; y: number } | null = null;
+  let bestApart = GRID_REACH;
+  for (const o of doc.gridOrigins) {
+    const apart = groundApart(o, at);
+    if (apart < bestApart) { bestApart = apart; best = o; }
+  }
+  if (best) gridProvisional = null;
+  else {
+    if (!gridProvisional || groundApart(gridProvisional, at) > GRID_REACH) gridProvisional = at;
+    best = gridProvisional;
+    // Something built near it: the origin is the town's now, saved with the map.
+    if (doc.revision !== gridDocSeen) {
+      gridDocSeen = doc.revision;
+      for (const n of doc.nodes.values()) {
+        if (groundApart(n, gridProvisional) < GRID_REACH) {
+          doc.gridOrigins.push({ ...gridProvisional });
+          persistence.saveSessionSoon(doc, sessionSettings);
+          break;
+        }
+      }
+    }
+  }
+  if (best !== gridActive) {
+    gridActive = best;
+    setGridOrigin(best.x, best.y);
+    requestDraw();
+  }
+}
+
 // ------------------------------------------------------------- free flight
 // The free camera (`render/planet/flight.ts`), as the player set it out
 // (2026-10-10): the cursor hidden and the mouse captured (Pointer Lock API,
@@ -790,7 +843,9 @@ window.addEventListener('keydown', (e) => {
   // Ctrl is the way down while flying; other shortcuts with it stay the page's.
   const ctrl = e.code === 'ControlLeft' || e.code === 'ControlRight';
   if ((e.ctrlKey && !ctrl && !flight.active) || e.metaKey || e.altKey) return;
-  if (e.code === 'KeyV' && !e.repeat && !e.ctrlKey) {
+  // V is the road tool's too (its plan: straight, curve, freehand, `ui/roads/keys.ts`):
+  // with that tool in hand it stays the road's, and the bar's Fly button takes off.
+  if (e.code === 'KeyV' && !e.repeat && !e.ctrlKey && !(!flight.active && game.tool === 'road')) {
     e.preventDefault(); e.stopImmediatePropagation();
     if (flight.active) land(); else takeOff();
     return;
@@ -3581,6 +3636,7 @@ function frame(now: number): void {
   frameTimer.mark('painéis');
   const wall = frameClock.tick(now);
   // The camera's glide: keys held, the wheel's notches being spent.
+  chooseGridOrigin(now);
   if (flight?.active) {
     steerByPointer(Math.min(0.1, wall));
     flight.step(wall);

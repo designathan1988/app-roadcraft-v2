@@ -71,6 +71,71 @@ export function atlasToSphereInto(x: number, y: number, out: Vec3): Vec3 {
 export const GRID_ORIGIN = tileCellOf(0, 0);
 
 /**
+ * THE GRID'S ORIGIN WHERE THE PLAYER BUILDS. One grid for the whole sphere is
+ * true near its origin only: a quarter of the way round its two directions
+ * met at 80 degrees and turned 1.5 degrees in 70 m, and three roads drawn
+ * side by side snapped to 141, 144 and 147 degrees (the player, 2026-10-10:
+ * "a mesma via traçada com o mesmo ângulo tem ângulos diferentes"). As
+ * Medieval Engineers builds on its planets (a local coordinate system where
+ * a construction starts, its neighbours snapped to the nearest one), the
+ * grid's origin is the place the building in view started (`setGridOrigin`,
+ * `main.ts` from the map's own list): straight and square over a town. Its
+ * centre, east and north (unit vectors of the planet's frame).
+ */
+const gridC: Vec3 = { x: 0, y: 0, z: 1 };
+const gridE: Vec3 = { x: 1, y: 0, z: 0 };
+const gridN: Vec3 = { x: 0, y: 1, z: 0 };
+const gridListeners = new Set<() => void>();
+{
+  const t = TILES[GRID_ORIGIN]!;
+  Object.assign(gridC, t.centre); Object.assign(gridE, t.east); Object.assign(gridN, t.north);
+}
+/** Puts the grid's origin at an atlas point, its north the planet's (the pole's way laid level there). */
+export function setGridOrigin(x: number, y: number): void {
+  const c: Vec3 = { x: 0, y: 0, z: 0 };
+  atlasToSphereInto(x, y, c);
+  // North: the pole (the planet frame's z) laid level; at a pole, the piece's own north.
+  let nx = -c.z * c.x, ny = -c.z * c.y, nz = 1 - c.z * c.z;
+  let l = Math.hypot(nx, ny, nz);
+  if (l < 1e-6) { const t = TILES[tileCellOf(x, y)]!; nx = t.north.x; ny = t.north.y; nz = t.north.z; l = Math.hypot(nx, ny, nz); }
+  nx /= l; ny /= l; nz /= l;
+  if (Math.abs(gridC.x - c.x) + Math.abs(gridC.y - c.y) + Math.abs(gridC.z - c.z) < 1e-12) return;
+  gridC.x = c.x; gridC.y = c.y; gridC.z = c.z;
+  gridN.x = nx; gridN.y = ny; gridN.z = nz;
+  // East = north x up.
+  gridE.x = ny * c.z - nz * c.y; gridE.y = nz * c.x - nx * c.z; gridE.z = nx * c.y - ny * c.x;
+  for (const listener of gridListeners) listener();
+}
+/** The grid's origin (centre, east, north; the planet's frame), and a call when it moves. */
+export function gridOrigin(): { readonly c: Readonly<Vec3>; readonly e: Readonly<Vec3>; readonly n: Readonly<Vec3> } {
+  return { c: gridC, e: gridE, n: gridN };
+}
+export function onGridOrigin(listener: () => void): () => void {
+  gridListeners.add(listener);
+  return () => gridListeners.delete(listener);
+}
+/** A unit sphere direction on the grid's map (azimuthal equidistant about its origin, world units), into `out`. */
+function sphereToGridInto(d: Readonly<Vec3>, out: FacePoint): FacePoint {
+  const ex = d.x * gridE.x + d.y * gridE.y + d.z * gridE.z;
+  const ny = d.x * gridN.x + d.y * gridN.y + d.z * gridN.z;
+  const across = Math.hypot(ex, ny);
+  const arc = Math.atan2(across, d.x * gridC.x + d.y * gridC.y + d.z * gridC.z);
+  const k = across > 1e-12 ? (arc * PLANET_RADIUS) / across : PLANET_RADIUS;
+  out.x = ex * k; out.y = ny * k;
+  return out;
+}
+/** A point of the grid's map back to its unit sphere direction, into `out`. */
+function gridToSphereInto(x: number, y: number, out: Vec3): Vec3 {
+  const d = Math.hypot(x, y);
+  if (d < 1e-9) { out.x = gridC.x; out.y = gridC.y; out.z = gridC.z; return out; }
+  const th = d / PLANET_RADIUS, c = Math.cos(th), s = Math.sin(th) / d;
+  out.x = gridC.x * c + (gridE.x * x + gridN.x * y) * s;
+  out.y = gridC.y * c + (gridE.y * x + gridN.y * y) * s;
+  out.z = gridC.z * c + (gridE.z * x + gridN.z * y) * s;
+  return out;
+}
+
+/**
  * The grid point nearest an atlas point, written on the same chart, into
  * `out` (the grid above, drawn by `render/terrain.ts` uGrid). `offset` moves
  * the points into the cells' middles. The flat map's grid on the flat map and
@@ -84,10 +149,10 @@ export function snapToFaceGridInto(x: number, y: number, step: number, offset: n
   }
   const chart = tileCellOf(x, y);
   atlasToSphereInto(x, y, s3);
-  sphereToTileInto(GRID_ORIGIN, s3, fp);
+  sphereToGridInto(s3, fp);
   const gx = Math.round((fp.x - offset) / step) * step + offset;
   const gy = Math.round((fp.y - offset) / step) * step + offset;
-  tileToSphereInto(GRID_ORIGIN, gx, gy, s3);
+  gridToSphereInto(gx, gy, s3);
   return sphereToChartInto(chart, s3, out);
 }
 
@@ -125,8 +190,8 @@ export function faceGridHeading(x: number, y: number, axis: 0 | 1): number {
   if (identity()) return axis === 0 ? 0 : Math.PI / 2;
   const chart = tileCellOf(x, y);
   atlasToSphereInto(x, y, s3);
-  sphereToTileInto(GRID_ORIGIN, s3, gridAt);
-  tileToSphereInto(GRID_ORIGIN, gridAt.x + (axis === 0 ? 1 : 0), gridAt.y + (axis === 1 ? 1 : 0), s3);
+  sphereToGridInto(s3, gridAt);
+  gridToSphereInto(gridAt.x + (axis === 0 ? 1 : 0), gridAt.y + (axis === 1 ? 1 : 0), s3);
   sphereToChartInto(chart, s3, gridAt);
   return Math.atan2(gridAt.y - y, gridAt.x - x);
 }

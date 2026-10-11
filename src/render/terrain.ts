@@ -29,8 +29,8 @@ import {
   type WebGLRenderer,
 } from 'three';
 import { UNITS_PER_METER as UNITS_PER_METER_HERE } from '@world/units';
-import { TILE_COUNT as PLANET_TILE_COUNT, TILES as PLANET_TILES } from '@core/planetTiles';
-import { GRID_ORIGIN } from '@world/planet/charts';
+import { TILE_COUNT as PLANET_TILE_COUNT } from '@core/planetTiles';
+import { gridOrigin, onGridOrigin } from '@world/planet/charts';
 
 import type { RoadDoc } from '@world/doc';
 import { BIOME_KINDS, COVER_KINDS, PAINT_KINDS, isBiomeKind, isGeologyKind, type CoverKind, type GeologyKind, type PaintDab } from '@world/terrainPaint';
@@ -214,12 +214,20 @@ export const TERRAIN_GRID: { value: [number, number, number] } = { value: [25, 0
  * draws the others only. A uniform array, not a texture: the terrain's
  * fragment shader already holds the 16 texture units WebGL guarantees.
  */
-/** The planet grid's origin (`world/planet/charts.ts` GRID_ORIGIN): its centre, east and north on the sphere. */
-const GRID_ORIGIN_GLSL = (() => {
-  const t = PLANET_TILES[GRID_ORIGIN]!;
-  const v = (p: { x: number; y: number; z: number }): string => `vec3(${p.x.toFixed(9)}, ${p.y.toFixed(9)}, ${p.z.toFixed(9)})`;
-  return `const vec3 GRID_C = ${v(t.centre)}; const vec3 GRID_E = ${v(t.east)}; const vec3 GRID_N = ${v(t.north)};`;
-})();
+/**
+ * The planet grid's origin (`world/planet/charts.ts` setGridOrigin): its
+ * centre, east and north on the sphere, shared by every plate and moved with
+ * the place the player builds.
+ */
+const GRID_ORIGIN_GLSL = 'uniform vec3 GRID_C; uniform vec3 GRID_E; uniform vec3 GRID_N;';
+const GRID_FRAME = { c: { value: new Vector3() }, e: { value: new Vector3() }, n: { value: new Vector3() } };
+const readGridFrame = (): void => {
+  const o = gridOrigin();
+  GRID_FRAME.c.value.set(o.c.x, o.c.y, o.c.z);
+  GRID_FRAME.e.value.set(o.e.x, o.e.y, o.e.z);
+  GRID_FRAME.n.value.set(o.n.x, o.n.y, o.n.z);
+};
+if (__PLANET__) { readGridFrame(); onGridOrigin(readGridFrame); }
 export const PLANET_ACTIVE_WORDS = Math.ceil(PLANET_TILE_COUNT / 24);
 export const PLANET_ACTIVE_TILES: { value: Float32Array } = { value: new Float32Array(PLANET_ACTIVE_WORDS) };
 /**
@@ -1213,6 +1221,7 @@ function terrainMaterial(
     uPaintSize: { value: TERRAIN_SIZE },
     uGrassField: GRASS_FIELD,
     uGrid: TERRAIN_GRID,
+    ...(__PLANET__ ? { GRID_C: GRID_FRAME.c, GRID_E: GRID_FRAME.e, GRID_N: GRID_FRAME.n } : {}),
     uShore: { value: shore as Texture },
     uShoreGrid: { value: new Vector3(TERRAIN_HALF, TERRAIN_CELL, GRID) },
     uRockMap: { value: sharedLayers('map', bakes.rocks.map((bake) => bake.map), true, anisotropy) as Texture },
@@ -2019,7 +2028,7 @@ function terrainMaterial(
          if (uGrid.y > 0.0) {
            ${__PLANET__ ? `
            // On the planet: one grid for the sphere, the map about the
-           // grid's origin (\`world/planet/charts.ts\` GRID_ORIGIN, the one the
+           // grid's origin (\`world/planet/charts.ts\` setGridOrigin, the one the
            // road tool snaps to): smooth everywhere, no cube edge or corner.
            vec2 g;
            float onMap = 1.0;

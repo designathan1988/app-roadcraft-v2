@@ -245,6 +245,12 @@ export class RoadDoc {
    */
   terrainRelief: ReliefVersion = RELIEF_LEGACY;
   /**
+   * The grid's origins on the planet (atlas points): one where each town's
+   * building started (`world/planet/charts.ts` setGridOrigin, chosen in
+   * `main.ts`). Saved with the map, so a town keeps the grid it was drawn on.
+   */
+  gridOrigins: { x: number; y: number }[] = [];
+  /**
    * The regional standard of the map's road paint (docs/VIAS.md V6,
    * `roads/markingStyle.ts`). 'classic' for every map saved before the
    * regions, so it opens identical; a new map from the game is Brazilian.
@@ -1239,6 +1245,7 @@ export class RoadDoc {
     copy.terrainStamps.length = 0;
     copy.terrainStamps.push(...this.terrainStamps.map((stamp) => ({ ...stamp })));
     copy.terrainRelief = this.terrainRelief;
+    copy.gridOrigins = this.gridOrigins.map((o) => ({ ...o }));
     copy.markingStyle = this.markingStyle;
     copy.nature = this.nature ? { ...this.nature } : null;
     copy.buildings.copyAllocator(this.buildings);
@@ -1434,6 +1441,7 @@ export class RoadDoc {
       this.terrainStamps.push(...source.terrainStamps.map((stamp) => ({ ...stamp })));
       this.terrainRelief = source.terrainRelief;
     }
+    this.gridOrigins = source.gridOrigins.map((o) => ({ ...o }));
 
     this.nodeIds = new IdAllocator(source.nodeIds.peek);
     this.segIds = new IdAllocator(source.segIds.peek);
@@ -1512,6 +1520,7 @@ export class RoadDoc {
       terrain: this.terrainStamps.map((stamp) => ({ ...stamp })),
       // Only for the natural land: a legacy map serialises as before.
       ...(this.terrainRelief !== RELIEF_LEGACY ? { relief: this.terrainRelief } : {}),
+      ...(this.gridOrigins.length ? { gridOrigins: this.gridOrigins.map((o) => [o.x, o.y] as const) } : {}),
       ...(this.markingStyle !== 'classic' ? { markingStyle: this.markingStyle } : {}),
       ...(this.nature ? { nature: { ...this.nature } } : {}),
       ...(this.terrainPaint.length > 0 ? { paint: this.terrainPaint.map((dab) => ({ ...dab })) } : {}),
@@ -1704,6 +1713,9 @@ export class RoadDoc {
     }
     // Absent: a map from before the natural land, which stays on the old one.
     doc.terrainRelief = isReliefVersion(data.relief) ? data.relief : RELIEF_LEGACY;
+    doc.gridOrigins = Array.isArray(data.gridOrigins)
+      ? data.gridOrigins.filter((o) => Array.isArray(o) && Number.isFinite(o[0]) && Number.isFinite(o[1])).map((o) => ({ x: o[0], y: o[1] }))
+      : [];
     doc.markingStyle = isMarkingStyle(data.markingStyle) ? data.markingStyle : 'classic';
     // Absent: a map from before the ecosystem, which keeps its ground.
     doc.nature = isNatureSettings(data.nature) ? { region: data.nature.region, seed: data.nature.seed } : null;
@@ -1840,6 +1852,7 @@ export interface SerializedDoc {
   readonly terrain?: readonly TerrainStamp[];
   /** `ReliefVersion`; absent on maps made before the natural landform. */
   readonly relief?: number;
+  readonly gridOrigins?: readonly (readonly [number, number])[];
   /** The regional standard of the road paint (docs/VIAS.md V6); absent: 'classic'. */
   readonly markingStyle?: string;
   /** The ecosystem (`NatureSettings`); absent on maps made before it. */
