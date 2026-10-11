@@ -15,20 +15,19 @@ import { Store } from './store';
 import { alignBuildings, alignSolids, type AlignOp } from '../model/align';
 import { BLOCKS, blockSolid, type BlockPlacement } from '../model/blocks';
 import { View, type Hit } from './view';
-import { Handles, HANDLE_COLORS, type Handle } from './handles';
+import { Handles, HANDLE_COLORS, type Handle, type HandleKind } from './handles';
 import { Inference, SNAP_COLORS, type Snap } from './infer';
 import { createShell3, type Shell3 } from '../ui/shell';
 import { icon } from '../ui/icons';
-import { closeOnOutside } from '../ui/kit';
 import { family, typeById } from '../families/index';
 import { CATEGORY_NAMES, resolveParams } from '../families/family';
-import { changeLevels, fitLevels, floorsIn, riders, snapToFloor } from '../model/quick';
+import { changeLevels, courtyardIn, fitLevels, floorsIn, podiumUnder, riders, setbackOn, snapToFloor } from '../model/quick';
 import { emptyParts3, faceMatrix, FrameSink } from '../eval/parts';
 import { buildPartsMesh, type PartsMesh } from '../render/parts';
 import type { FaceInfo } from '../eval/faces';
 import { between, column, elemKey, elementsOf, groupElements, grow, row, rowOnFace, sameFace, sameType, shift, shrink, type Elem, type GroupRow } from './elements';
 
-export type Tool = 'select' | 'push' | 'rect' | 'circle' | 'polygon' | 'place' | 'paint' | 'block' | 'tape';
+export type Tool = 'select' | 'move' | 'rotate' | 'scale' | 'push' | 'extrude' | 'rect' | 'circle' | 'polygon' | 'place' | 'paint' | 'block' | 'tape';
 
 export interface Selection {
   building: ID | null;
@@ -148,6 +147,7 @@ export class Editor3 {
       this.toast(`Giro de ${this.rotSnap}° em ${this.rotSnap}°.`);
     });
     this.renderTools();
+    this.updateHint();
     this.shell.name.value = this.store.project.name;
     this.sync();
     this.view.frame();
@@ -270,11 +270,19 @@ export class Editor3 {
 
   // ── Seleção ──────────────────────────────────────────────────────────
   select(next: Partial<Selection>): void {
-    this.sel = { building: null, solids: [], face: null, item: null, elems: [], others: [], vertex: null, ...next };
+    const sel: Selection = { building: null, solids: [], face: null, item: null, elems: [], others: [], vertex: null, ...next };
+    // Seleção nova: a medida pendente (da ação anterior) não vale para ela.
+    if (JSON.stringify(sel) !== JSON.stringify(this.sel) && this.measure && !this.drag) {
+      this.measure = null;
+      this.shell.status.vcbLabel.textContent = 'Medidas';
+    }
+    this.sel = sel;
     this.syncSelection();
   }
 
   private syncSelection(): void {
+    // A dica acompanha o contexto (fora ou dentro do edifício).
+    if (!this.handles.hover) this.updateHint();
     this.drawSelection();
     this.renderCrumb();
     this.emit();
@@ -504,14 +512,31 @@ export class Editor3 {
       }
     }
     // Alça visível é alça clicável: só as ferramentas que manipulam (Selecionar e Empurrar) as mostram.
-    this.handles.set(this.handlesLive() ? handles : []);
+    // Mover, Girar e Escala mostram só as alças daquela ação (como o W/E/R do Blender e do three.js).
+    const only: Partial<Record<Tool, HandleKind[]>> = {
+      move: ['move-x', 'move-z', 'move-xz', 'lift'],
+      rotate: ['rotate'],
+      scale: ['size', 'height', 'floors', 'push', 'cwidth', 'cheight'],
+    };
+    const keep = only[this.tool];
+    this.handles.set(!this.handlesLive() ? [] : keep ? handles.filter((h) => keep.includes(h.kind)) : handles);
     this.placeCtxBar();
     this.drawSelDims();
   }
 
   /** Ferramentas em que as alças respondem ao clique (e por isso aparecem). */
   private handlesLive(): boolean {
-    return this.tool === 'select' || this.tool === 'push';
+    return this.selectLike() || this.pushLike();
+  }
+
+  /** Selecionar e as ferramentas de transformação (Mover, Girar, Escala): clicam, selecionam e arrastam igual. */
+  selectLike(): boolean {
+    return this.tool === 'select' || this.tool === 'move' || this.tool === 'rotate' || this.tool === 'scale';
+  }
+
+  /** Empurrar/puxar e Extrudar: o clique numa face já começa a mexer nela. */
+  pushLike(): boolean {
+    return this.tool === 'push' || this.tool === 'extrude';
   }
 
   /**
@@ -561,34 +586,9 @@ export class Editor3 {
   }
 
   // ── Barra contextual ─────────────────────────────────────────────────
+  /** A faixa de ações (ui/actions.ts) se redesenha pelo evento de mudança; aqui só avisa. */
   private placeCtxBar(): void {
-    const bar = this.shell.ctxbar;
-    const b = this.activeBuilding();
-    if (!b || this.drag || this.draft || this.tool !== 'select') {
-      bar.hidden = true;
-      return;
-    }
-    const s = this.activeSolid();
-    const btn = (cmd: string, ic: string, label: string, pressed?: boolean, title = label) => `<button data-ctx="${cmd}" title="${title}" ${pressed !== undefined ? `aria-pressed="${pressed}"` : ''}>${icon(ic)}${label ? `<span>${label}</span>` : ''}</button>`;
-    let html: string;
-    if (this.context !== b.id) html = btn('enter', 'enter', 'Editar', undefined, 'Editar o edifício (duplo clique)') + '<span class="sep"></span>' + btn('dup', 'copy', '', undefined, 'Duplicar · Ctrl+D') + btn('rot90', 'rotate', '', undefined, 'Girar 90°') + btn('del', 'trash', '', undefined, 'Excluir · Delete');
-    else if (this.sel.item) html = btn('dup', 'copy', '', undefined, 'Duplicar · Ctrl+D') + btn('del', 'trash', '', undefined, 'Excluir · Delete');
-    else if (s)
-      html =
-        btn('op-add', 'add', '', s.op === 'add', 'Somar ao edifício') +
-        btn('op-subtract', 'subtract', '', s.op === 'subtract', 'Recortar o que veio antes (pátios, arcos, nichos)') +
-        btn('op-intersect', 'intersect', '', s.op === 'intersect', 'Interseção: fica só a parte em comum') +
-        '<span class="sep"></span>' +
-        btn('dup', 'copy', '', undefined, 'Duplicar · Ctrl+D') +
-        btn('mirror', 'mirror', '', undefined, 'Espelhar') +
-        btn('del', 'trash', '', undefined, 'Excluir · Delete');
-    else html = btn('exit', 'exit', 'Sair', undefined, 'Sair do edifício · Esc') + btn('dup', 'copy', '', undefined, 'Duplicar edifício');
-    bar.innerHTML = html;
-    // Fixa no alto da vista: nunca cobre o gizmo, as cotas nem o modelo.
-    bar.hidden = false;
-    bar.style.left = '50%';
-    bar.style.top = '10px';
-    bar.querySelectorAll<HTMLButtonElement>('button').forEach((x) => x.addEventListener('click', () => this.command(x.dataset.ctx!)));
+    this.emit();
   }
 
   // ── Comandos ─────────────────────────────────────────────────────────
@@ -796,16 +796,19 @@ export class Editor3 {
             return true;
           }
           case 'corner': {
+            // Um canto escolhido, ou todos os cantos do contorno quando nenhum está escolhido.
             const vid = this.sel.vertex;
-            const v = vid ? [so.plan.outer, ...so.plan.holes].flat().find((q) => q.id === vid) : undefined;
-            if (!v) return false;
-            if ('round' in a) {
-              if (n('round') > 0) v.round = n('round');
-              else delete v.round;
-            }
-            if ('chamfer' in a) {
-              if (n('chamfer') > 0) v.chamfer = n('chamfer');
-              else delete v.chamfer;
+            const vs = vid ? [so.plan.outer, ...so.plan.holes].flat().filter((q) => q.id === vid) : so.plan.outer;
+            if (!vs.length) return false;
+            for (const v of vs) {
+              if ('round' in a) {
+                if (n('round') > 0) v.round = n('round');
+                else delete v.round;
+              }
+              if ('chamfer' in a) {
+                if (n('chamfer') > 0) v.chamfer = n('chamfer');
+                else delete v.chamfer;
+              }
             }
             return true;
           }
@@ -1104,6 +1107,80 @@ export class Editor3 {
     }
   }
 
+  /**
+   * Ação com medida (SketchUp): aplica já com o valor padrão e deixa a caixa
+   * de medidas pronta; digitar outra medida + Enter desfaz e refaz com ela,
+   * na mesma seleção de antes.
+   */
+  applyMeasured(label: string, def: number, apply: (v: number) => boolean): boolean {
+    const before = structuredClone(this.sel);
+    const ctx = this.context;
+    if (!apply(def)) {
+      this.toast('Não foi possível aqui: o volume é pequeno demais ou falta escolher uma face.');
+      return false;
+    }
+    const retype = (t: string): boolean => {
+      const v = parseLength(t);
+      if (v === null) return false;
+      this.store.undo();
+      this.context = ctx;
+      this.select(before);
+      const ok = apply(v);
+      // Pode redigitar de novo (a seleção mudou ao refazer, e isso limpa a medida).
+      this.setMeasure(label, retype);
+      return ok;
+    };
+    this.setMeasure(label, retype);
+    this.toast(`${label}: ${fmt(def)} m. Digite outra medida e Enter para trocar.`);
+    return true;
+  }
+
+  /** Massa pronta sobre o volume escolhido: recuo no topo, embasamento ou pátio. */
+  quick(kind: 'setback' | 'podium' | 'court'): void {
+    const b = this.activeBuilding(),
+      s = this.activeSolid();
+    if (!b || !s) return void this.toast('Escolha um volume primeiro.');
+    let made: string | null = null;
+    const ok = this.change(b.id, (x) => {
+      const so = findSolid(x, s.id)!;
+      const n = kind === 'setback' ? setbackOn(x, so) : kind === 'podium' ? podiumUnder(x, so) : courtyardIn(x, so);
+      if (!n) return false;
+      made = n.id;
+    }, kind === 'setback' ? 'Recuo criado; o volume de baixo virou terraço.' : kind === 'podium' ? 'Embasamento com lojas criado.' : 'Pátio recortado.');
+    if (ok && made) this.select({ building: b.id, solids: [made] });
+    else if (!ok) this.toast('Não cabe: o volume é pequeno demais para isso.');
+  }
+
+  /** Mais (+) ou menos (−) andares em todos os edifícios selecionados (dentro de um, só nele). */
+  floorsDelta(delta: number): void {
+    const ids = this.context ? [this.context] : this.selectedBuildings();
+    if (!ids.length) return;
+    let n = 0;
+    for (const id of ids) {
+      const b = this.store.building(id);
+      if (b && changeLevels(b, delta)) n++;
+    }
+    if (!n) return void this.toast(delta > 0 ? 'Já está no máximo de pavimentos.' : 'Já está no térreo.');
+    this.store.commit(ids, delta > 0 ? 'Mais um pavimento.' : 'Um pavimento a menos.');
+    this.toast(delta > 0 ? 'Mais um pavimento.' : 'Um pavimento a menos.');
+    this.drawSelection();
+  }
+
+  /** A interface (ui/actions.ts) abre o menu de contexto com as ações da seleção. */
+  contextRequested: ((x: number, y: number) => void) | null = null;
+
+  /** Botão direito: seleciona o que está sob o cursor (se ainda não estiver) e pede o menu. */
+  private openContext(e: PointerEvent): void {
+    this.cancel();
+    const hit = this.pickAt(e);
+    if (hit && !this.inSelection(hit, false)) {
+      if (this.tool !== 'select' && !this.selectLike()) this.setTool('select');
+      this.clickSelect(hit, { ctrlKey: false, shiftKey: false, metaKey: false, altKey: false });
+    }
+    if (!this.activeBuilding()) return;
+    this.contextRequested?.(e.clientX, e.clientY);
+  }
+
   /** Edifícios selecionados, o principal primeiro. */
   selectedBuildings(): ID[] {
     return this.sel.building ? [this.sel.building, ...this.sel.others] : [];
@@ -1362,72 +1439,43 @@ export class Editor3 {
     this.emit();
   }
 
-  /** Último desenho usado (o grupo mostra o ícone dele). */
-  private lastDraw: Tool = 'rect';
-
   private renderTools(): void {
     type T = { id: string; ic: string; label: string; key: string };
-    const draw: T[] = [
-      { id: 'rect', ic: 'rect', label: 'Retângulo', key: 'R' },
-      { id: 'circle', ic: 'circle', label: 'Círculo', key: 'C' },
-      { id: 'polygon', ic: 'polygon', label: 'Polígono', key: 'L' },
+    // Tudo à vista, em grupos (como a barra de ferramentas do Blender): nada escondido em submenu.
+    const groups: T[][] = [
+      [
+        { id: 'select', ic: 'cursor', label: 'Selecionar: mover, girar, tamanho e andares direto na seleção', key: 'V' },
+        { id: 'move', ic: 'move', label: 'Mover', key: 'M' },
+        { id: 'rotate', ic: 'rotate', label: 'Girar', key: 'Q' },
+        { id: 'scale', ic: 'scale', label: 'Escala e tamanho', key: 'S' },
+      ],
+      [
+        { id: 'push', ic: 'push', label: 'Empurrar/puxar faces', key: 'P' },
+        { id: 'extrude', ic: 'extrude', label: 'Extrudar face (volume novo)', key: 'E' },
+      ],
+      [
+        { id: 'rect', ic: 'rect', label: 'Retângulo', key: 'R' },
+        { id: 'circle', ic: 'circle', label: 'Círculo', key: 'C' },
+        { id: 'polygon', ic: 'polygon', label: 'Polígono', key: 'L' },
+        { id: 'mode', ic: this.drawMode === 'add' ? 'add' : 'subtract', label: this.drawMode === 'add' ? 'O desenho soma (trocar para recortar)' : 'O desenho recorta (trocar para somar)', key: 'X' },
+      ],
+      [
+        { id: 'catalog', ic: 'catalog', label: 'Biblioteca de blocos e componentes', key: 'K' },
+        { id: 'paint', ic: 'paint', label: 'Pintar (Alt: conta-gotas)', key: 'B' },
+        { id: 'tape', ic: 'tape', label: 'Trena e cotas (Shift+Delete apaga)', key: 'T' },
+      ],
     ];
-    if (draw.some((d) => d.id === this.tool)) this.lastDraw = this.tool;
-    const cur = draw.find((d) => d.id === this.lastDraw)!;
-    const one = (t: T, pressed: boolean, extra = '') => `<button class="f3-tool${extra}" data-tool="${t.id}" title="${t.label} · ${t.key}" aria-label="${t.label}" aria-pressed="${pressed}">${icon(t.ic)}</button>`;
-    const drawing = draw.some((d) => d.id === this.tool);
-    this.shell.tools.innerHTML = [
-      one({ id: 'select', ic: 'cursor', label: 'Selecionar e mover', key: 'V' }, this.tool === 'select'),
-      one({ id: 'push', ic: 'push', label: 'Empurrar/puxar faces (Ctrl: extrudar)', key: 'P' }, this.tool === 'push'),
-      one({ ...cur, label: `${cur.label} (segure para outros desenhos)` }, drawing, ' grp'),
-      one({ id: 'mode', ic: this.drawMode === 'add' ? 'add' : 'subtract', label: this.drawMode === 'add' ? 'O desenho soma (trocar para recortar)' : 'O desenho recorta (trocar para somar)', key: 'X' }, this.drawMode === 'subtract'),
-      '<hr>',
-      one({ id: 'catalog', ic: 'catalog', label: 'Biblioteca de blocos e componentes', key: 'K' }, !this.shell.cat.classList.contains('closed')),
-      one({ id: 'paint', ic: 'paint', label: 'Pintar (Alt: conta-gotas)', key: 'B' }, this.tool === 'paint'),
-      one({ id: 'tape', ic: 'tape', label: 'Trena e cotas (Shift+Delete apaga)', key: 'T' }, this.tool === 'tape'),
-    ].join('');
-    const snapBtn = this.shell.status.bar.querySelector('[data-cmd="snap"]');
+    const pressed = (t: T) => (t.id === 'mode' ? this.drawMode === 'subtract' : t.id === 'catalog' ? !this.shell.cat.classList.contains('closed') : this.tool === t.id);
+    this.shell.tools.innerHTML = groups
+      .map((g) => g.map((t) => `<button class="f3-tool" data-tool="${t.id}" title="${t.label} · ${t.key}" aria-label="${t.label}" aria-pressed="${pressed(t)}">${icon(t.ic)}</button>`).join(''))
+      .join('<hr>');
+    const snapBtn = this.shell.viewbar.querySelector('[data-cmd="snap"]');
     snapBtn?.setAttribute('aria-pressed', String(this.infer.enabled));
     const libBtn = this.shell.status.bar.querySelector('[data-cmd="library"]');
     libBtn?.setAttribute('aria-pressed', String(!this.shell.cat.classList.contains('closed')));
-    // Submenu do grupo de desenho: segurar (ou clicar no canto) abre a lista.
-    const grp = this.shell.tools.querySelector<HTMLButtonElement>('.f3-tool.grp')!;
-    let hold = 0;
-    const openFly = () => {
-      this.closeFly();
-      const fly = document.createElement('div');
-      fly.className = 'f3-fly f3-island';
-      fly.innerHTML = draw.map((d) => `<button data-fly="${d.id}" aria-pressed="${d.id === this.tool}">${icon(d.ic)}${d.label}<kbd>${d.key}</kbd></button>`).join('');
-      const r = grp.getBoundingClientRect(),
-        rv = this.shell.view.getBoundingClientRect();
-      fly.style.left = `${r.right - rv.left + 8}px`;
-      fly.style.top = `${r.top - rv.top - 4}px`;
-      this.shell.view.appendChild(fly);
-      fly.querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
-        b.addEventListener('click', () => {
-          this.closeFly();
-          this.setTool(b.dataset.fly as Tool);
-        }),
-      );
-      closeOnOutside(fly, () => this.closeFly(), grp);
-    };
-    grp.addEventListener('pointerdown', () => {
-      hold = window.setTimeout(() => {
-        hold = -1;
-        openFly();
-      }, 320);
-    });
-    grp.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      openFly();
-    });
     this.shell.tools.querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
       b.addEventListener('click', () => {
         const id = b.dataset.tool!;
-        if (b === grp) {
-          if (hold === -1) return void (hold = 0);
-          clearTimeout(hold);
-        }
         if (id === 'mode') this.toggleDrawMode();
         else if (id === 'catalog') this.toggleLibrary();
         else this.setTool(id as Tool);
@@ -1435,9 +1483,6 @@ export class Editor3 {
     );
   }
 
-  private closeFly(): void {
-    this.shell.view.querySelectorAll('.f3-fly').forEach((f) => f.remove());
-  }
 
   /** Abre ou fecha a gaveta da biblioteca. */
   toggleLibrary(open?: boolean): void {
@@ -1470,8 +1515,13 @@ export class Editor3 {
     const t =
       text ??
       ({
-        select: this.context ? 'Clique num volume, face ou componente; Ctrl soma, Shift alterna; arraste no vazio para a caixa. Duplo clique numa janela pega a fileira.' : 'Clique num edifício; Ctrl soma, Shift alterna; arraste no vazio para a caixa. Duplo clique entra para editar.',
+        select: this.context ? 'Clique: volume, face ou peça · Ctrl soma · Shift alterna · arraste no vazio: caixa · duplo clique: fileira' : 'Clique: edifício · Ctrl soma · Shift alterna · arraste no vazio: caixa · duplo clique: entra',
+        move: 'Mover: arraste o objeto ou uma seta (digite a distância e Enter). Ctrl copia.',
+        rotate: 'Girar: arraste o anel (digite o ângulo e Enter).',
+        scale: 'Escala: arraste um canto (Shift mantém a proporção), uma seta de lado ou a seta verde (andares).',
         push: 'Arraste uma face para empurrar ou puxar. Digite a distância e Enter.',
+        extrude: 'Extrudar: arraste uma face para criar um volume novo a partir dela. Digite a profundidade e Enter.',
+        tape: 'Clique dois pontos para medir; a cota fica no modelo.',
         rect: 'Clique dois cantos (no chão ou sobre um telhado plano). Depois digite 10x8 e Enter para largura × profundidade, ou um número para a altura.',
         circle: 'Clique o centro e depois o raio.',
         polygon: 'Clique os pontos; clique no primeiro ou Enter para fechar. Backspace volta um ponto.',
@@ -1479,6 +1529,8 @@ export class Editor3 {
         paint: 'Clique numa face para pintar. Alt+clique copia o material.',
       } as Record<Tool, string>)[this.tool];
     this.shell.status.hint.textContent = t;
+    // Em janela estreita a dica pode encurtar: o texto inteiro fica no passar do mouse.
+    this.shell.status.hint.title = t;
   }
 
   private setMeasure(label: string, apply: Measure['apply']): void {
@@ -1491,11 +1543,11 @@ export class Editor3 {
     const el = this.view.renderer.domElement;
     el.tabIndex = 0;
     el.addEventListener('contextmenu', (e) => e.preventDefault());
-    let orbit: { x: number; y: number; pan: boolean } | null = null;
+    let orbit: { x: number; y: number; pan: boolean; right: boolean; x0: number; y0: number } | null = null;
     el.addEventListener('pointerdown', (e) => {
       el.focus();
       if (e.button === 2 || e.button === 1) {
-        orbit = { x: e.clientX, y: e.clientY, pan: e.button === 1 || e.shiftKey };
+        orbit = { x: e.clientX, y: e.clientY, pan: e.button === 1 || e.shiftKey, right: e.button === 2, x0: e.clientX, y0: e.clientY };
         el.setPointerCapture(e.pointerId);
         return;
       }
@@ -1525,7 +1577,10 @@ export class Editor3 {
     });
     el.addEventListener('pointerup', (e) => {
       if (orbit) {
+        // Botão direito sem arrastar: menu de contexto do que está sob o cursor (arrastar continua girando a vista).
+        const click = orbit.right && Math.hypot(e.clientX - orbit.x0, e.clientY - orbit.y0) < 5;
         orbit = null;
+        if (click) this.openContext(e);
         return;
       }
       if (e.button === 0) this.onUp(e);
@@ -1569,7 +1624,7 @@ export class Editor3 {
   }
 
   private onDown(e: PointerEvent): void {
-    if (this.tool === 'select' || this.tool === 'push') {
+    if (this.selectLike() || this.pushLike()) {
       const h = this.handles.hit(e);
       if (h) {
         this.beginHandle(h, e);
@@ -1577,7 +1632,7 @@ export class Editor3 {
         return;
       }
       const hit = this.pickAt(e);
-      if (this.tool === 'push') {
+      if (this.pushLike()) {
         if (hit?.face && (hit.face.kind === 'side' || hit.face.kind === 'top' || hit.face.kind === 'roof') && hit.building) {
           if (this.context !== hit.building.id) this.context = hit.building.id;
           this.select({ building: hit.building.id, solids: [hit.face.solid], face: hit.face.kind === 'side' ? { kind: 'side', edge: hit.face.edge! } : { kind: 'top' } });
@@ -1589,7 +1644,7 @@ export class Editor3 {
       // Ctrl sobre o que já está selecionado: arrastar copia (SketchUp); parado, nada muda.
       const copyGrab = !!hit && (e.ctrlKey || e.metaKey) && !e.shiftKey && this.inSelection(hit, false);
       // Vazio, ou Ctrl/Shift em qualquer lugar: caixa de seleção; parado, vale como clique na soltura.
-      if (this.tool === 'select' && !copyGrab && (!hit || e.ctrlKey || e.shiftKey || e.metaKey)) {
+      if (this.selectLike() && !copyGrab && (!hit || e.ctrlKey || e.shiftKey || e.metaKey)) {
         this.marquee = { ax: e.clientX, ay: e.clientY, bx: e.clientX, by: e.clientY, active: false, hit, ev: { ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, metaKey: e.metaKey, altKey: e.altKey } };
         return;
       }
@@ -1672,7 +1727,7 @@ export class Editor3 {
 
   private onDouble(e: MouseEvent): void {
     if (this.tool === 'polygon' && this.draft) return this.finishPolygon();
-    if (this.tool !== 'select') return;
+    if (!this.selectLike()) return;
     const hit = this.pickAt(e);
     if (!hit) return;
     if (this.context === hit.building.id && hit.part && (hit.part.rule || hit.part.item)) {
@@ -1683,7 +1738,10 @@ export class Editor3 {
     if (this.context !== hit.building.id) {
       this.enter(hit.building.id);
       const h2 = this.pickAt(e, hit.building.id);
-      if (h2?.face) this.select({ building: hit.building.id, solids: [h2.face.solid] });
+      // Parede: o volume dela; janela ou sacada: o volume que a regra (ou o componente) ocupa.
+      const it = h2?.part?.item ? hit.building.items.find((x) => x.id === h2.part!.item) : undefined;
+      const sid = h2?.face?.solid ?? h2?.part?.solid ?? (it && (it.host.kind === 'face' || it.host.kind === 'roof') ? it.host.solid : undefined);
+      if (sid) this.select({ building: hit.building.id, solids: [sid] });
       this.toast('Editando o edifício. Esc sai.');
     } else if (hit.face && (hit.face.kind === 'side' || hit.face.kind === 'top')) {
       this.select({ building: hit.building.id, solids: [hit.face.solid], face: hit.face.kind === 'side' ? { kind: 'side', edge: hit.face.edge! } : { kind: 'top' } });
@@ -1703,7 +1761,7 @@ export class Editor3 {
         return;
       }
       const hit = this.pickAt(e);
-      if (this.tool === 'push') {
+      if (this.pushLike()) {
         // Empurrar: a mão aparece só onde o clique pega uma face que se empurra.
         const ok = !!hit?.face && (hit.face.kind === 'side' || hit.face.kind === 'top' || hit.face.kind === 'roof');
         this.drawHover(null);
@@ -1977,7 +2035,7 @@ export class Editor3 {
     const M = this.view.buildingMatrix(b);
     // Ctrl + seta da face: extrudar (volume novo), como o Ctrl do Empurrar/Puxar do SketchUp.
     if ((h.kind === 'push' && h.edge) || (h.kind === 'height' && this.sel.face?.kind === 'top')) {
-      if (e.ctrlKey) {
+      if (e.ctrlKey || this.tool === 'extrude') {
         const side = h.kind === 'push';
         this.startDrag(side ? 'extrude-side' : 'extrude-top', b, e, { handle: h.kind, at: h.at.clone(), dir: h.dir!.clone(), edge: h.edge, sid: s.id }, true);
         this.preview.add(b.id);
@@ -2649,7 +2707,7 @@ export class Editor3 {
     if (!d.moved) {
       this.store.revert();
       // Clique sem arrastar numa alça: vale como clique no modelo (selecionar face, etc.).
-      if (d.data.viaHandle && this.tool === 'select') this.clickSelect(this.pickAt(e), e);
+      if (d.data.viaHandle && this.selectLike()) this.clickSelect(this.pickAt(e), e);
       else this.drawSelection();
       return;
     }
@@ -3312,7 +3370,11 @@ export class Editor3 {
         if (this.tool === 'polygon') this.finishPolygon();
         else if (this.pathDraft) this.finishPath();
       } else if (k === 'v') this.setTool('select');
+      else if (k === 'm') this.setTool('move');
+      else if (k === 'q') this.setTool('rotate');
+      else if (k === 's') this.setTool('scale');
       else if (k === 'p') this.setTool('push');
+      else if (k === 'e') this.setTool('extrude');
       else if (k === 'r') this.setTool('rect');
       else if (k === 'c') this.setTool('circle');
       else if (k === 'l') this.setTool('polygon');
@@ -3333,7 +3395,7 @@ export class Editor3 {
 
   private bindTop(): void {
     this.shell.top.querySelectorAll<HTMLButtonElement>('[data-cmd]').forEach((b) => b.addEventListener('click', () => (this.topCommand?.(b.dataset.cmd!) ? undefined : this.command(b.dataset.cmd!))));
-    this.shell.status.bar.querySelectorAll<HTMLButtonElement>('[data-cmd]').forEach((b) => b.addEventListener('click', () => this.command(b.dataset.cmd!)));
+    this.shell.viewbar.querySelectorAll<HTMLButtonElement>('[data-cmd]').forEach((b) => b.addEventListener('click', () => this.command(b.dataset.cmd!)));
     this.shell.name.addEventListener('change', () => {
       this.store.project.name = this.shell.name.value.trim() || 'Projeto sem título';
       this.store.commit(null, '', false);

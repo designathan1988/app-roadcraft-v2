@@ -41,7 +41,7 @@ export const CSS = `
 .f3-view{grid-area:view;position:relative;overflow:hidden;min-height:0;background:var(--canvas)}
 .f3-canvas{position:absolute;inset:0;width:100%;height:100%;display:block;outline:none}
 .f3-island{position:absolute;z-index:6;background:var(--panel);border:1px solid #00000059;border-radius:var(--r);box-shadow:var(--shadow);backdrop-filter:blur(10px)}
-.f3-tools{left:10px;top:50px;display:flex;flex-direction:column;gap:2px;padding:4px}
+.f3-tools{left:10px;top:10px;display:flex;flex-direction:column;gap:2px;padding:4px}
 .f3-tool{width:32px;height:32px;border:0;border-radius:7px;background:transparent;display:grid;place-items:center;position:relative;color:var(--muted)}
 .f3-tool:hover{background:var(--raise);color:var(--ink)}
 .f3-tool[aria-pressed=true]{background:var(--accent);color:#1b0f06}
@@ -52,7 +52,7 @@ export const CSS = `
 .f3-fly button:hover{background:var(--raise)}
 .f3-fly button[aria-pressed=true]{color:var(--accent-ink)}
 .f3-fly kbd{margin-left:auto}
-.f3-crumb{left:58px;top:10px;display:flex;align-items:center;gap:0;padding:3px}
+.f3-crumb{left:58px;top:calc(var(--rib, 68px) + 18px);display:flex;align-items:center;gap:0;padding:3px}
 .f3-crumb button{border:0;background:transparent;border-radius:6px;height:24px;padding:0 8px;font-size:12px;color:var(--muted)}
 .f3-crumb button:hover{background:var(--raise);color:var(--ink)}
 .f3-crumb button[aria-current=true]{color:var(--ink);font-weight:600}
@@ -109,16 +109,37 @@ export const CSS = `
 .f3-vcb input{width:90px;border:0;background:transparent;font:600 12px ui-monospace,Consolas,monospace;color:var(--ink);outline:none;padding:0}
 .f3-sepv{width:1px;height:16px;background:var(--line);margin:0 3px;flex:none}
 /* Sobre a vista */
-.f3-ctx{position:absolute;z-index:7;display:flex;gap:1px;padding:3px;background:var(--panel);border:1px solid #00000059;border-radius:9px;color:var(--ink);box-shadow:var(--shadow);transform:translateX(-50%);pointer-events:auto}
-.f3-ctx button{border:0;background:transparent;color:var(--muted);border-radius:6px;height:28px;min-width:28px;padding:0 6px;display:flex;align-items:center;justify-content:center;gap:5px;font-size:12px}
+.f3-ctx{position:absolute;z-index:7;left:58px;right:304px;top:10px;min-height:68px;display:flex;flex-wrap:wrap;row-gap:4px;justify-content:flex-start;align-items:stretch;gap:0;padding:4px 4px 2px;background:var(--panel);border:1px solid #00000059;border-radius:10px;color:var(--ink);box-shadow:var(--shadow);pointer-events:auto}
+/* Faixa "Modificar" (aba contextual do Revit): ícone sobre o nome, nome do grupo embaixo. */
+.f3-ctx .grp{display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:0 4px;border-right:1px solid var(--line);flex:none}
+.f3-ctx .empty{align-self:center;padding:0 12px;color:var(--faint);font-size:12px;white-space:nowrap}
+.f3-ctx .grp:last-child{border-right:0}
+.f3-ctx .btns{display:flex;gap:1px}
+.f3-ctx .cap{font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--faint);padding:1px 0 2px;white-space:nowrap}
+.f3-ctx button{border:0;background:transparent;color:var(--muted);border-radius:6px;min-width:50px;height:44px;padding:3px 5px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:10.5px;line-height:1.1;white-space:nowrap}
+.f3-ctx button svg{width:18px;height:18px}
 .f3-ctx button:hover{background:var(--raise);color:var(--ink)}
 .f3-ctx button[aria-pressed=true]{background:var(--accent);color:#1b0f06}
-.f3-ctx .sep{width:1px;background:var(--line);margin:4px 2px}
+.f3-ctx button.danger:hover{background:#5a1f1f;color:#ffb4a8}
+/* Menu de contexto (botão direito) */
+.f3-cmenu{position:absolute;z-index:45;min-width:220px;max-height:min(70vh,640px);overflow:auto;padding:4px;display:flex;flex-direction:column;color:var(--ink)}
+.f3-cmenu .hd{font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);padding:7px 8px 3px}
+.f3-cmenu button{display:flex;align-items:center;gap:8px;height:28px;border:0;background:transparent;color:var(--ink);border-radius:6px;padding:0 10px 0 8px;font:inherit;font-size:12px;text-align:left;white-space:nowrap}
+.f3-cmenu button svg{width:16px;height:16px;color:var(--muted)}
+.f3-cmenu button:hover{background:var(--raise)}
+.f3-cmenu button[aria-pressed=true]{color:var(--accent-ink)}
+.f3-cmenu button.danger{color:#ff8f80}
+/* Ilha "Vista": grade, giro, encaixe, hora e enquadrar (fora da barra de baixo). */
+.f3-viewbar{right:304px;top:calc(var(--rib, 68px) + 18px);display:flex;flex-direction:column;align-items:stretch;gap:2px;padding:4px;color:var(--muted);font-size:11.5px}
+.f3-viewbar .f3-tb{height:26px;min-width:26px;padding:0 6px;justify-content:flex-start}
+.f3-viewbar .f3-ctl{justify-content:flex-start}
+.f3-viewbar .f3-sepv{width:auto;height:1px;margin:2px 0}
+.f3-viewbar .f3-tb[aria-pressed=true]{color:var(--accent-ink);background:var(--accent-2)}
 .f3-snap{position:absolute;z-index:8;pointer-events:none;font:600 11px Inter,system-ui;padding:2px 6px;border-radius:4px;color:#fff;transform:translate(12px,12px);white-space:nowrap;box-shadow:0 2px 6px #0003}
 .f3-dim{position:absolute;z-index:8;pointer-events:none;font:600 11.5px ui-monospace,Consolas,monospace;background:#1d1f23;color:#fff;padding:2px 6px;border-radius:4px;transform:translate(-50%,-50%);white-space:nowrap;box-shadow:0 2px 6px #0003}
 .f3-toast{position:absolute;left:58px;bottom:50px;z-index:9;background:var(--panel-solid);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:7px 11px;font-size:12px;opacity:0;transform:translateY(4px);transition:opacity .18s,transform .18s;pointer-events:none;max-width:420px;box-shadow:var(--shadow)}
 .f3-toast.on{opacity:1;transform:none}
-.f3-warn{position:absolute;left:50%;top:54px;transform:translateX(-50%);z-index:5;width:max-content;max-width:min(560px,46%);background:#3a2a12f2;border:1px solid #7a5a22;color:#ffd79a;border-radius:8px;padding:5px 10px;font-size:11.5px;line-height:1.35;display:none;white-space:normal;overflow-wrap:anywhere;box-shadow:var(--shadow)}
+.f3-warn{position:absolute;left:50%;top:calc(var(--rib, 68px) + 18px);transform:translateX(-50%);z-index:5;width:max-content;max-width:min(560px,46%);background:#3a2a12f2;border:1px solid #7a5a22;color:#ffd79a;border-radius:8px;padding:5px 10px;font-size:11.5px;line-height:1.35;display:none;white-space:normal;overflow-wrap:anywhere;box-shadow:var(--shadow)}
 .f3-warn.on{display:block}
 .f3-tip{position:fixed;z-index:60;pointer-events:none;background:#0d0e10f2;color:#f3f4f5;border:1px solid #ffffff14;border-radius:6px;padding:4px 8px;font:12px/1.35 Inter,"Segoe UI",system-ui,sans-serif;max-width:280px;box-shadow:0 6px 18px #0006;opacity:0;transition:opacity .12s}
 .f3-tip.on{opacity:1}
@@ -160,7 +181,7 @@ export const CSS = `
 .f3 select option{background:#24272c;color:var(--ink)}
 .f3-row{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
 .f3-seg{display:flex;background:var(--field);border-radius:6px;padding:2px;gap:2px;width:100%}
-.f3-seg button{flex:1;border:0;background:transparent;border-radius:4px;height:22px;padding:0 4px;font-size:11.5px;display:flex;align-items:center;justify-content:center;gap:4px;min-width:0;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.f3-seg button{flex:1 1 auto;border:0;background:transparent;border-radius:4px;height:22px;padding:0 4px;font-size:11.5px;display:flex;align-items:center;justify-content:center;gap:4px;min-width:0;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .f3-seg button:hover{color:var(--ink)}
 .f3-seg button[aria-pressed=true]{background:var(--raise);color:var(--ink);box-shadow:0 1px 2px #0005}
 .f3-chips{display:grid;grid-template-columns:repeat(6,1fr);gap:2px;background:var(--field);border-radius:6px;padding:2px}
@@ -174,7 +195,7 @@ export const CSS = `
 .f3-btn.danger{color:var(--danger)}
 .f3-btn.primary{background:var(--accent);color:#1b0f06;font-weight:600}
 .f3-btn.ic{width:24px;padding:0;justify-content:center}
-.f3-sw{display:grid;grid-template-columns:116px 24px minmax(0,1fr);gap:6px;align-items:center;min-height:26px}
+.f3-sw{display:grid;grid-template-columns:84px 24px minmax(0,1fr);gap:6px;align-items:center;min-height:26px}
 .f3-sw input[type=color]{width:24px;height:22px;border:0;border-radius:5px;padding:0;background:none;cursor:pointer}
 .f3-sw>span{font-size:11px;color:var(--muted)}
 .f3-pick{width:100%;height:26px;border:1px solid transparent;border-radius:5px;padding:0 6px;font:inherit;background:var(--field);color:var(--ink)}
@@ -264,6 +285,8 @@ export interface Shell3 {
   status: { hint: HTMLElement; vcbLabel: HTMLElement; vcb: HTMLInputElement; stats: HTMLElement; bar: HTMLElement };
   crumb: HTMLElement;
   ctxbar: HTMLElement;
+  /** Ilha "Vista" (grade, giro, encaixe, hora, enquadrar). */
+  viewbar: HTMLElement;
   snap: HTMLElement;
   dim: HTMLElement;
   toast: HTMLElement;
@@ -304,7 +327,7 @@ export function createShell3(container: HTMLElement): Shell3 {
   <main class="f3-view">
     <nav class="f3-tools f3-island" aria-label="Ferramentas"></nav>
     <div class="f3-crumb f3-island"></div>
-    <div class="f3-ctx" hidden></div>
+    <div class="f3-ctx f3-ribbon" role="toolbar" aria-label="Modificar"></div>
     <div class="f3-snap" hidden></div>
     <div class="f3-dim" hidden></div>
     <div class="f3-toast" role="status"></div>
@@ -316,17 +339,17 @@ export function createShell3(container: HTMLElement): Shell3 {
     </aside>
     <section class="f3-cat f3-island closed" aria-label="Biblioteca"></section>
     <footer class="f3-status f3-island">
-      <button class="f3-tb" data-cmd="library" title="Biblioteca: blocos e componentes · K">${icon('catalog')}<span>Biblioteca</span></button>
-      <span class="f3-sepv"></span>
       <span class="f3-hint"></span>
-      <span class="f3-stats"></span>
       <span class="f3-vcb" title="Digite um valor e Enter durante ou logo depois de uma operação (10, 10x8, 5x)"><label>Medidas</label><input aria-label="Medidas" spellcheck="false" autocomplete="off"></span>
+      <span class="f3-stats"></span>
+    </footer>
+    <div class="f3-viewbar f3-island" aria-label="Vista">
       <label class="f3-ctl" title="Passo da grade e do encaixe">${icon('grid')}<select data-grid><option value="0.05">5 cm</option><option value="0.1">10 cm</option><option value="0.25">25 cm</option><option value="0.5" selected>50 cm</option><option value="1">1 m</option><option value="2">2 m</option><option value="5">5 m</option></select></label>
       <label class="f3-ctl" title="Passo do giro">${icon('rotate')}<select data-rot><option value="1">1°</option><option value="5">5°</option><option value="15" selected>15°</option><option value="30">30°</option><option value="45">45°</option><option value="90">90°</option></select></label>
       <span class="f3-sepv"></span>
       <button class="f3-tb" data-cmd="snap" title="Encaixe · G">${icon('magnet')}</button>
       <button class="f3-tb" data-cmd="frame" title="Enquadrar · F">${icon('focus')}</button>
-    </footer>
+    </div>
   </main>
   <input type="file" accept=".json,application/json" hidden data-file="project">
   <input type="file" accept=".json,application/json" hidden data-file="component">`;
@@ -370,6 +393,7 @@ export function createShell3(container: HTMLElement): Shell3 {
     status: { hint: $('.f3-hint'), vcbLabel: $('.f3-vcb label'), vcb: $('.f3-vcb input'), stats: $('.f3-stats'), bar: $('.f3-status') },
     crumb: $('.f3-crumb'),
     ctxbar: $('.f3-ctx'),
+    viewbar: $('.f3-viewbar'),
     snap: $('.f3-snap'),
     dim: $('.f3-dim'),
     toast: $('.f3-toast'),

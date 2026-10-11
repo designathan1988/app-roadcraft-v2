@@ -3,9 +3,9 @@
 // linha (longo ocupa a linha inteira), arrastar o rótulo muda o número (como
 // no Figma e no Blender), seções recolhíveis lembradas entre seleções.
 
-const CLOSED_KEY = 'forma3_closed_sections';
-/** Seções que começam recolhidas (ferramentas menos usadas). */
-const DEFAULT_CLOSED = new Set(['Modificar', 'Frisos e cornija', 'Modelar rápido', 'Repetição', 'Detalhes', 'Perfil', 'Categorias na vista']);
+// v2: nada começa recolhido (ferramenta escondida não é ferramenta); quem recolhe é o usuário.
+const CLOSED_KEY = 'forma3_closed_sections_v2';
+const DEFAULT_CLOSED = new Set<string>();
 
 function loadClosed(): Set<string> {
   try {
@@ -53,8 +53,13 @@ export function polish(root: HTMLElement): void {
     }
     if (!f.title) f.title = label;
     if (label.length > 11 || (ctl instanceof HTMLSelectElement && label.length > 7)) f.classList.add("w");
-    // Opção longa não cabe ao lado do rótulo (sobram ~95 px com a seta): rótulo em cima, campo na linha toda.
-    if (ctl instanceof HTMLSelectElement && Math.max(0, ...[...ctl.options].map((o) => o.text.length)) > 14) f.classList.add('w', 'st');
+    // Seletor: meia coluna só comporta ~7 letras com a seta; mais que isso ocupa a linha inteira,
+    // e opção longa (mais de 14) põe o rótulo em cima e o campo na linha toda.
+    if (ctl instanceof HTMLSelectElement) {
+      const longest = Math.max(0, ...[...ctl.options].map((o) => o.text.length));
+      if (longest > 7) f.classList.add('w');
+      if (longest > 14) f.classList.add('st');
+    }
     if (ctl instanceof HTMLInputElement && ctl.type !== 'color') {
       const wrap = document.createElement('span');
       wrap.className = 'f3-in';

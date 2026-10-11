@@ -8,7 +8,7 @@ import { closeOnOutside } from './kit';
 const fmt = (h: number) => `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;
 
 export function mountTime(ed: Editor3): void {
-  const bar = ed.shell.status.bar;
+  const bar = ed.shell.viewbar;
   const btn = document.createElement('button');
   btn.className = 'f3-tb';
   btn.title = 'Hora do dia: sol, céu e luzes da noite';

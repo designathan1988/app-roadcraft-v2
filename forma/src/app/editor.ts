@@ -10,6 +10,7 @@ import { mountCatalog } from '../f3/ui/catalog';
 import { mountLayers } from '../f3/ui/layers';
 import { mountPalette } from '../f3/ui/palette';
 import { mountTime } from '../f3/ui/time';
+import { mountActions } from '../f3/ui/actions';
 import { loadAutosave, saveFile, openFileWithNotes, download, fileName } from '../f3/io/persist';
 import { exportGLB, exportOBJ, exportGameJSON } from '../f3/io/export';
 
@@ -32,6 +33,7 @@ mountCatalog(editor);
 mountLayers(editor);
 mountPalette(editor);
 mountTime(editor);
+mountActions(editor);
 (globalThis as { forma3?: Editor3 }).forma3 = editor;
 if (startNote) editor.toast(startNote);
 

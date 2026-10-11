@@ -92,3 +92,29 @@ kit; nada de HTML solto com estilos inline.
 
 Depois disso seguem, já na interface nova: materiais procedurais, luz e
 noite, interiores e caminhar, objetos.
+
+
+## v2 (2026-10-10): ferramentas à vista
+
+Pedido: "uma interface tem que ter ferramenta"; nada escondido em seção
+recolhida, submenu ou barra inferior. Referências: barra de ferramentas do
+modo de edição do Blender (docs.blender.org/manual/en/latest/modeling/meshes/tools/toolbar.html:
+Mover, Girar, Escalar, Extrudar, Inset, Bisel, Corte, Faca… todos visíveis) e a
+aba contextual Modificar do Revit (ações da seleção agrupadas, ícone e nome).
+
+- Barra esquerda: Selecionar, Mover (M), Girar (Q), Escala (S) | Empurrar (P),
+  Extrudar (E) | Retângulo, Círculo, Polígono, Somar/Recortar | Biblioteca,
+  Pintar, Trena. Mover/Girar/Escala mostram só as alças daquela ação.
+- Selecionar basta: a seleção mostra mover, girar, cantos, seta em cada face e
+  a seta verde de andares; alça visível é alça clicável em qualquer ferramenta.
+- Faixa "Modificar" fixa no alto (ui/actions.ts), uma lista só de ações para
+  a faixa, o menu do botão direito e a busca: edifício (editar, andares,
+  duplicar, girar, excluir), vários (alinhar, distribuir), volume (somar,
+  recortar, interseção, extrudar, inset, offset, dividir, bisel, arredondar,
+  chanfrar, recuo, embasamento, pátio, andares, duplicar, espelhar, excluir),
+  janelas (fileira, coluna, mesmo tipo, face, soltar/voltar à regra, trocar,
+  remover), componente. Ação com medida aplica o padrão e aceita redigitar.
+- Botão direito parado: menu com as mesmas ações; arrastar gira a vista.
+- Ilha "Vista" (grade, giro, hora, encaixe, enquadrar) à direita; a barra de
+  baixo só tem dica, medida e contagem. Painel sem seções recolhidas por
+  padrão. Verificação de texto cortado no DOM em 8 estados.
