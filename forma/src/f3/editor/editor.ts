@@ -22,6 +22,7 @@ import { icon } from '../ui/icons';
 import { closeOnOutside } from '../ui/kit';
 import { family, typeById } from '../families/index';
 import { CATEGORY_NAMES, resolveParams } from '../families/family';
+import { changeLevels, fitLevels, floorsIn, riders, snapToFloor } from '../model/quick';
 import { emptyParts3, faceMatrix, FrameSink } from '../eval/parts';
 import { buildPartsMesh, type PartsMesh } from '../render/parts';
 import type { FaceInfo } from '../eval/faces';
@@ -425,6 +426,8 @@ export class Editor3 {
       const R = Math.max(box.getSize(new THREE.Vector3()).length() / 2 + 1.5, 4);
       handles.push(...this.moveHandles(c, ax, az), this.rotateHandle(c, R));
       handles.push(...this.sizeHandles(b, b.solids.filter((x) => x.op === 'add'), Math.max(...b.solids.map((x) => x.base + x.height), 0)));
+      // Andares do prédio inteiro direto na seleção: o eixo vertical do gizmo (Gumball do Rhino).
+      handles.push({ kind: 'floors', at: c.clone(), dir: new THREE.Vector3(0, 1, 0), color: HANDLE_COLORS.y, label: 'Andares do edifício (arraste para cima ou para baixo)' });
     } else if (this.sel.item) {
       const it = this.activeItem();
       if (it && (it.host.kind === 'free' || it.host.kind === 'roof')) {
@@ -464,9 +467,18 @@ export class Editor3 {
         handles.push(...this.moveHandles(over, ax, az));
         const R = Math.max(...r.outer.pts.map((p) => Math.hypot(p[0] - ctr[0], p[1] - ctr[1]))) + 1.2;
         handles.push(this.rotateHandle(over, R));
-        handles.push(...this.sizeHandles(b, [s0], r.top));
+        // Cantos redimensionam; cada lado tem a própria seta de empurrar/puxar (abaixo).
+        handles.push(...this.sizeHandles(b, [s0], r.top).filter((h) => h.sx && h.sz));
+        for (const ring of [s0.plan.outer, ...s0.plan.holes])
+          ring.forEach((v, k) => {
+            const n = edgeNormal(s0, v.id);
+            if (!n) return;
+            const mid = midOf(v, ring[(k + 1) % ring.length]!);
+            const dir = new THREE.Vector3(n[0], 0, n[1]).transformDirection(M);
+            handles.push({ kind: 'push', at: W(mid, s0.base + s0.height / 2), dir, normal: dir.clone(), solid: s0.id, edge: v.id, color: HANDLE_COLORS.push, label: 'Empurrar/puxar este lado (Ctrl: extrudar)' });
+          });
       }
-      if (!faceMode || this.sel.face?.kind === 'top') handles.push({ kind: 'height', at: top, dir: new THREE.Vector3(0, 1, 0), solid: s0.id, color: HANDLE_COLORS.y, label: 'Altura' });
+      if (!faceMode || this.sel.face?.kind === 'top') handles.push({ kind: 'height', at: top, dir: new THREE.Vector3(0, 1, 0), solid: s0.id, color: HANDLE_COLORS.y, label: 'Altura de andar em andar (Alt: livre; Ctrl no topo: extrudar)' });
       if (!faceMode && (s0.base > 0.01 || s0.op !== 'add')) handles.push({ kind: 'lift', at: base, dir: new THREE.Vector3(0, -1, 0), solid: s0.id, color: HANDLE_COLORS.y, label: 'Elevação' });
       // Vértices e meios dos lados (curvar), na base se afunilado, senão no topo.
       const yv = s0.taper > 0.01 ? r.base : r.top;
@@ -487,13 +499,19 @@ export class Editor3 {
           const mid = midOf(ringOf[k]!, ringOf[(k + 1) % ringOf.length]!);
           const at = W(mid, s0.base + s0.height / 2);
           const dir = new THREE.Vector3(n[0], 0, n[1]).transformDirection(M);
-          handles.push({ kind: 'push', at, dir, solid: s0.id, edge: this.sel.face.edge, color: HANDLE_COLORS.push, label: 'Empurrar/puxar' });
+          handles.push({ kind: 'push', at, dir, normal: dir.clone(), solid: s0.id, edge: this.sel.face.edge, color: HANDLE_COLORS.push, label: 'Empurrar/puxar (Ctrl: extrudar)' });
         }
       }
     }
-    this.handles.set(handles);
+    // Alça visível é alça clicável: só as ferramentas que manipulam (Selecionar e Empurrar) as mostram.
+    this.handles.set(this.handlesLive() ? handles : []);
     this.placeCtxBar();
     this.drawSelDims();
+  }
+
+  /** Ferramentas em que as alças respondem ao clique (e por isso aparecem). */
+  private handlesLive(): boolean {
+    return this.tool === 'select' || this.tool === 'push';
   }
 
   /**
@@ -876,11 +894,12 @@ export class Editor3 {
     const els = [...this.shell.view.querySelectorAll<HTMLElement>('.f3-sdim')];
     const H = this.shell.view.clientHeight;
     const GAP = 6;
-    const placed: DOMRect[] = [];
+    // As alças vêm primeiro: a cota nunca fica embaixo de uma seta, ponto ou quadrado.
+    const placed: { left: number; right: number; top: number; bottom: number }[] = this.handles.footprints();
     for (const el of els) {
       let r = el.getBoundingClientRect();
-      const hit = (q: DOMRect) => placed.find((p) => q.left < p.right + GAP && q.right > p.left - GAP && q.top < p.bottom + GAP && q.bottom > p.top - GAP);
-      for (let k = 0; k < 6; k++) {
+      const hit = (q: { left: number; right: number; top: number; bottom: number }) => placed.find((p) => q.left < p.right + GAP && q.right > p.left - GAP && q.top < p.bottom + GAP && q.bottom > p.top - GAP);
+      for (let k = 0; k < 12; k++) {
         const p = hit(r);
         if (!p) break;
         const top = parseFloat(el.style.top);
@@ -1075,6 +1094,14 @@ export class Editor3 {
       this.groupHover.add(front, behind);
     }
     this.view.mark();
+  }
+
+  /** O que está apoiado em cima do volume `sid` (no estado `orig`) sobe ou desce `dy` junto com o topo dele. */
+  private carryRiders(b: Building3, orig: Building3, sid: ID, dy: number): void {
+    for (const r of riders(orig, sid)) {
+      const x = findSolid(b, r.id);
+      if (x) x.base = r.base + dy;
+    }
   }
 
   /** Edifícios selecionados, o principal primeiro. */
@@ -1320,7 +1347,8 @@ export class Editor3 {
     if (t !== 'place') this.placing = null;
     this.renderTools();
     this.updateHint();
-    this.placeCtxBar();
+    // Alças e barra conforme a ferramenta nova (alça visível é alça clicável).
+    this.drawSelection();
     this.emit();
   }
 
@@ -1542,7 +1570,7 @@ export class Editor3 {
 
   private onDown(e: PointerEvent): void {
     if (this.tool === 'select' || this.tool === 'push') {
-      const h = this.tool === 'select' ? this.handles.hit(e) : null;
+      const h = this.handles.hit(e);
       if (h) {
         this.beginHandle(h, e);
         if (this.drag) this.drag.data.viaHandle = true;
@@ -1665,7 +1693,7 @@ export class Editor3 {
   private onMove(e: PointerEvent): void {
     if (this.marquee) return this.moveMarquee(e);
     if (this.drag) return this.updateDrag(e);
-    if (this.tool === 'select') {
+    if (this.handlesLive()) {
       this.handles.setHover(this.handles.hit(e));
       const h = this.handles.hover;
       if (h) {
@@ -1675,6 +1703,14 @@ export class Editor3 {
         return;
       }
       const hit = this.pickAt(e);
+      if (this.tool === 'push') {
+        // Empurrar: a mão aparece só onde o clique pega uma face que se empurra.
+        const ok = !!hit?.face && (hit.face.kind === 'side' || hit.face.kind === 'top' || hit.face.kind === 'roof');
+        this.drawHover(null);
+        this.updateHint();
+        this.view.renderer.domElement.style.cursor = ok ? 'pointer' : 'default';
+        return;
+      }
       this.drawHover(hit);
       const b = this.activeBuilding();
       const onSel = !!hit && !!b && hit.building.id === b.id && (this.context !== b.id || (hit.face && this.sel.solids.includes(hit.face.solid)) || (!!hit.part?.item && hit.part.item === this.sel.item));
@@ -1926,6 +1962,17 @@ export class Editor3 {
       });
       return;
     }
+    if (h.kind === 'floors') {
+      const lv = [...b.levels].sort((p, q) => p.elevation - q.elevation);
+      this.startDrag('floors', b, e, { handle: 'floors', at: h.at.clone(), typ: lv[1]?.height ?? lv[0]?.height ?? 3 }, true);
+      this.preview.add(b.id);
+      this.setMeasure('Pavimentos', (t) => {
+        const n = Math.round(parseLength(t) ?? NaN);
+        if (!Number.isFinite(n) || n < 1 || n > 60) return false;
+        return this.change(b.id, (x) => void changeLevels(x, n - x.levels.length), `${n} pavimento(s).`);
+      });
+      return;
+    }
     if (!s) return;
     const M = this.view.buildingMatrix(b);
     // Ctrl + seta da face: extrudar (volume novo), como o Ctrl do Empurrar/Puxar do SketchUp.
@@ -1951,8 +1998,12 @@ export class Editor3 {
         if (v === null || v <= 0) return false;
         this.change(b.id, (x) => {
           const y = findSolid(x, s.id)!;
+          const before = structuredClone(x);
+          const top0 = y.base + y.height;
           if (h.kind === 'height') y.height = v;
           else y.base = v;
+          this.carryRiders(x, before, y.id, y.base + y.height - top0);
+          fitLevels(x);
         }, h.kind === 'height' ? `Altura ${fmt(v)} m.` : `Elevação ${fmt(v)} m.`);
         return true;
       });
@@ -2305,6 +2356,19 @@ export class Editor3 {
       this.store.touch([b.id]);
       return;
     }
+    if (d.kind === 'floors') {
+      // Andares do prédio: cada altura típica arrastada é um pavimento a mais ou a menos.
+      const typ = d.data.typ as number;
+      const k = Math.round(this.dragAlong(d, e, d.data.at as THREE.Vector3, new THREE.Vector3(0, 1, 0)) / typ);
+      b.levels = structuredClone(orig.levels);
+      b.solids = structuredClone(orig.solids);
+      const n = Math.max(1, Math.min(60, orig.levels.length + k));
+      changeLevels(b, n - orig.levels.length);
+      const top = Math.max(...b.levels.map((l) => l.elevation + l.height));
+      this.showDim(`${n} ${n === 1 ? 'pavimento' : 'pavimentos'} · ${fmt(top)} m`, e);
+      this.store.touch([b.id]);
+      return;
+    }
     const s = findSolid(b, d.data.sid as ID);
     const so = findSolid(orig, d.data.sid as ID);
     if (!s || !so) return;
@@ -2327,13 +2391,22 @@ export class Editor3 {
       const tops = b.solids.filter((x) => x.id !== s.id).flatMap((x) => [x.base + x.height, x.base]).concat(b.levels.map((l) => l.elevation), b.levels.map((l) => l.elevation + l.height));
       if (d.kind === 'height') {
         const want = so.base + so.height + t;
-        const sn = e.altKey ? { value: want, snapped: false } : this.infer.snapHeight(want, tops, 0.3);
-        s.height = Math.max(0.3, sn.value - so.base);
-        this.showDim(`${fmt(s.height)} m${sn.snapped ? ' · alinhado' : ''}`, e);
+        // De andar em andar (como no editor anterior); Alt ou encaixe desligado: altura livre.
+        const free = e.altKey || !this.infer.enabled;
+        s.height = Math.max(0.3, (free ? want : snapToFloor(orig, so.base, want)) - so.base);
+        // Os pavimentos do edifício acompanham: sobem com o volume e saem quando ninguém chega lá.
+        b.levels = structuredClone(orig.levels);
+        fitLevels(b);
+        this.carryRiders(b, orig, so.id, s.base + s.height - (so.base + so.height));
+        fitLevels(b);
+        const n = floorsIn(b, s);
+        this.showDim(`${fmt(s.height)} m · ${n} ${n === 1 ? 'pavimento' : 'pavimentos'}`, e);
+        void tops;
       } else {
         const want = so.base + t;
         const sn = e.altKey ? { value: want, snapped: false } : this.infer.snapHeight(want, tops, 0.3);
         s.base = sn.value;
+        this.carryRiders(b, orig, so.id, s.base - so.base);
         this.showDim(`base ${fmt(s.base)} m`, e);
       }
       this.store.touch([b.id]);

@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import type { ID } from '../model/schema';
 import type { View } from './view';
 
-export type HandleKind = 'move-x' | 'move-z' | 'move-xz' | 'lift' | 'rotate' | 'push' | 'height' | 'vertex' | 'bend' | 'taper' | 'cwidth' | 'cheight' | 'csill' | 'size';
+export type HandleKind = 'move-x' | 'move-z' | 'move-xz' | 'lift' | 'rotate' | 'push' | 'height' | 'floors' | 'vertex' | 'bend' | 'taper' | 'cwidth' | 'cheight' | 'csill' | 'size';
 
 export interface Handle {
   kind: HandleKind;
@@ -22,6 +22,8 @@ export interface Handle {
   /** Alça de tamanho: que lado da caixa ela puxa (-1, 0 ou 1 em x e z locais). */
   sx?: number;
   sz?: number;
+  /** Alça de face: normal para fora (no mundo); some quando a face dá as costas para a câmera. */
+  normal?: THREE.Vector3;
   color: string;
   label: string;
 }
@@ -61,8 +63,16 @@ export class Handles {
     return m;
   }
 
+  /** A alça está à vista? (alça de face só com a face voltada para a câmera) */
+  shown(h: Handle): boolean {
+    if (!h.normal) return true;
+    return h.normal.dot(this.view.camera.position.clone().sub(h.at)) > 0;
+  }
+
   set(list: Handle[]): void {
     this.list = list;
+    // Realce de uma alça que saiu da lista não fica para trás.
+    if (this.hover && !list.includes(this.hover)) this.hover = null;
     this.draw();
   }
 
@@ -73,6 +83,7 @@ export class Handles {
       if ((c as THREE.Line).isLine) (c as THREE.Line).geometry.dispose();
     }
     for (const h of this.list) {
+      if (!this.shown(h)) continue;
       const wpp = this.view.worldPerPixel(h.at);
       const hot = this.hover === h;
       // Realce amarelo sob o ponteiro, como o TransformControls do three.js.
@@ -158,6 +169,7 @@ export class Handles {
       return new THREE.Vector2(s.x, s.y);
     };
     for (const h of this.list) {
+      if (!this.shown(h)) continue;
       let d: number;
       if (h.kind === 'rotate' && h.ring) {
         d = Infinity;
@@ -176,6 +188,29 @@ export class Handles {
       if (d < tol && (!best || d + bias < best.d)) best = { d: d + bias, h };
     }
     return best?.h ?? null;
+  }
+
+  /**
+   * Onde as alças ocupam a tela (coordenadas do cliente): pontos como
+   * quadrados de ±9 px, setas amostradas a cada 12 px (uma diagonal não vira
+   * um quadrado enorme). As cotas desviam disso.
+   */
+  footprints(): { left: number; right: number; top: number; bottom: number }[] {
+    const r = this.view.renderer.domElement.getBoundingClientRect();
+    const out: { left: number; right: number; top: number; bottom: number }[] = [];
+    const box = (x: number, y: number, k: number) => out.push({ left: r.left + x - k, right: r.left + x + k, top: r.top + y - k, bottom: r.top + y + k });
+    for (const h of this.list) {
+      if (!this.shown(h)) continue;
+      const a = this.view.toScreen(h.at);
+      if (a.behind) continue;
+      if (h.dir && h.kind !== 'rotate') {
+        const len = this.view.worldPerPixel(h.at) * ARROW_PX;
+        const b = this.view.toScreen(h.at.clone().addScaledVector(h.dir, len * 1.15));
+        const n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 12));
+        for (let i = 0; i <= n; i++) box(a.x + ((b.x - a.x) * i) / n, a.y + ((b.y - a.y) * i) / n, 8);
+      } else box(a.x, a.y, 9);
+    }
+    return out;
   }
 
   setHover(h: Handle | null): void {

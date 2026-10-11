@@ -290,3 +290,82 @@ describe('inset do topo, escala e divisão', () => {
     expect(h.kind === 'face' && h.solid === up.id && Math.abs(h.y - (4 - 2.5 * Math.hypot(1, 1 / 6))) < 1e-6 && up.plan.outer.some((v) => v.id === h.edge)).toBe(true);
   });
 });
+
+describe('andares pela seta de altura', () => {
+  it('sobe de andar em andar, cria e tira pavimentos e conta os do volume', async () => {
+    const { building, levelsFor, rectPlan, roofSpec, solid } = await import('../../src/f3/model/defaults');
+    const { fitLevels, floorsIn, snapToFloor } = await import('../../src/f3/model/quick');
+    const s = solid({ plan: { outer: rectPlan(8, 8), holes: [] }, height: 9.4, roof: roofSpec('flat') });
+    const b = building({ levels: levelsFor(3, 3, 3.4), solids: [s] });
+    const ids = b.levels.map((l) => l.id);
+    // 3 pavimentos (3,4 + 3 + 3 = 9,4 m); puxando para 15 m encaixa em 15,4 (5 pavimentos).
+    s.height = snapToFloor(b, s.base, 15) - s.base;
+    expect(s.height).toBeCloseTo(15.4, 5);
+    fitLevels(b);
+    expect(b.levels).toHaveLength(5);
+    expect(b.levels.slice(0, 3).map((l) => l.id)).toEqual(ids);
+    expect(floorsIn(b, s)).toBe(5);
+    // Descendo para 6 m encaixa em 6,4 (2 pavimentos) e os de cima saem.
+    s.height = snapToFloor(b, s.base, 6) - s.base;
+    fitLevels(b);
+    expect(s.height).toBeCloseTo(6.4, 5);
+    expect(b.levels).toHaveLength(2);
+    // Nunca abaixo de um andar.
+    expect(snapToFloor(b, s.base, -5)).toBeCloseTo(3.4, 5);
+  });
+});
+
+describe('mais e menos pavimentos no corpo do prédio', () => {
+  it('torre com recuo: o corpo cresce e o recuo sobe junto; tirar faz o inverso sem passar do térreo', async () => {
+    const { building, levelsFor, rectPlan, roofSpec, solid } = await import('../../src/f3/model/defaults');
+    const { changeLevels } = await import('../../src/f3/model/quick');
+    const base = solid({ plan: { outer: rectPlan(13, 13), holes: [] }, height: 3.4, roof: roofSpec('flat') });
+    const torre = solid({ plan: { outer: rectPlan(8, 8), holes: [] }, height: 18, roof: roofSpec('flat') });
+    const recuo = solid({ plan: { outer: rectPlan(4, 4), holes: [] }, base: 18, height: 4.3, roof: roofSpec('flat') });
+    const b = building({ levels: levelsFor(7, 3, 3.4), solids: [base, torre, recuo] });
+    const ids = b.levels.map((l) => l.id);
+    expect(changeLevels(b, 2)).toBe(true);
+    expect(b.levels).toHaveLength(9);
+    expect(torre.height).toBeCloseTo(24, 5);
+    expect(recuo.base).toBeCloseTo(24, 5);
+    expect(recuo.height).toBeCloseTo(4.3, 5);
+    expect(base.height).toBeCloseTo(3.4, 5);
+    // Os pavimentos de antes continuam (mesmo ID), com cotas contínuas.
+    for (const id of ids) expect(b.levels.some((l) => l.id === id)).toBe(true);
+    b.levels.forEach((l, i) => i && expect(l.elevation).toBeCloseTo(b.levels[i - 1]!.elevation + b.levels[i - 1]!.height, 5));
+    expect(changeLevels(b, -3)).toBe(true);
+    expect(torre.height).toBeCloseTo(15, 5);
+    expect(recuo.base).toBeCloseTo(15, 5);
+    expect(b.levels).toHaveLength(6);
+    // Não passa do térreo.
+    changeLevels(b, -50);
+    expect(b.levels).toHaveLength(2); // térreo + o pavimento do recuo, que fica em cima do corpo
+    expect(b.levels[0]!.name).toBe('Térreo');
+    // A torre era 0,4 m mais baixa que a divisa: fica com o térreo menos isso.
+    expect(torre.height).toBeCloseTo(3, 5);
+    expect(recuo.base).toBeCloseTo(3, 5);
+  });
+
+  it('casa de um volume: o volume cresce um andar', async () => {
+    const { building, levelsFor, rectPlan, roofSpec, solid } = await import('../../src/f3/model/defaults');
+    const { changeLevels } = await import('../../src/f3/model/quick');
+    const s = solid({ plan: { outer: rectPlan(10, 8), holes: [] }, height: 6.4, roof: roofSpec('gable') });
+    const b = building({ levels: levelsFor(2, 3, 3.4), solids: [s] });
+    changeLevels(b, 1);
+    expect(s.height).toBeCloseTo(9.4, 5);
+    expect(b.levels).toHaveLength(3);
+  });
+});
+
+describe('volumes apoiados sobem junto', () => {
+  it('recuo e caixa d’água em cadeia sobre a torre; vizinho ao lado não', async () => {
+    const { building, rectPlan, roofSpec, solid } = await import('../../src/f3/model/defaults');
+    const { riders } = await import('../../src/f3/model/quick');
+    const torre = solid({ plan: { outer: rectPlan(8, 8), holes: [] }, height: 18, roof: roofSpec('flat') });
+    const recuo = solid({ plan: { outer: rectPlan(4, 4), holes: [] }, base: 18, height: 3, roof: roofSpec('flat') });
+    const caixa = solid({ plan: { outer: rectPlan(2, 2), holes: [] }, base: 21, height: 2, roof: roofSpec('flat') });
+    const vizinho = solid({ plan: { outer: rectPlan(4, 4, 20, 0), holes: [] }, base: 18, height: 3, roof: roofSpec('flat') });
+    const b = building({ solids: [torre, recuo, caixa, vizinho] });
+    expect(riders(b, torre.id).map((x) => x.id)).toEqual([recuo.id, caixa.id]);
+  });
+});
