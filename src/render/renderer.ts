@@ -110,6 +110,7 @@ import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } fro
 import { GroundDependant, type GroundRecord, type Rect, rectAround, unionRect } from './groundChanges';
 import { FOREST_SPECIES, buildGroundCover, createGroundCoverKit, type CoverPlacement, type ForestSpecies, type GroundCover, type TreePlacement } from './groundCover';
 import { clearingIndex } from '@world/trees';
+import { natureDensity } from './natureNoise';
 import { buildNatureForest, forestRoom, loadNatureTrees, seedOfKind, type NatureForest, type NatureTreeKit } from './natureTrees';
 import { createFogTexture, rasterFog, type FogLayer } from './fogLayer';
 import { buildElementLayer, loadElementKit, type ElementKit, type ElementLayer } from './elements';
@@ -406,9 +407,10 @@ function gardenPlants(all: Iterable<Building>, groundAt: (x: number, y: number) 
 
 /**
  * The most ground the view may take in (the screen's half height, world
- * units) with the trees still drawn: past it a tree is a pixel or two.
+ * units) with the trees still drawn: past it a tree is under a pixel or two
+ * (at 1 000 they went from a few hundred metres up, the player 2026-10-10).
  */
-const TREE_VIEW = 1000;
+const TREE_VIEW = 14_000;
 
 export function createSceneRenderer(
   canvas: HTMLCanvasElement,
@@ -2145,20 +2147,6 @@ export function createSceneRenderer(
    * player asked for few (2026-10-08) - the masses stay, thinned evenly.
    */
   const NATURE_TREES = 2_500;
-  const natureNoise = (x: number, y: number, scale: number, salt: number): number => {
-    const gx = x / scale, gy = y / scale;
-    const x0 = Math.floor(gx), y0 = Math.floor(gy);
-    const fx = gx - x0, fy = gy - y0;
-    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
-    const h = (a: number, b: number): number => {
-      let v = Math.imul(a, 374_761_393) ^ Math.imul(b, 668_265_263) ^ Math.imul(salt, 2_246_822_519);
-      v = Math.imul(v ^ (v >>> 13), 1_274_126_177);
-      return ((v ^ (v >>> 16)) >>> 0) / 4_294_967_296;
-    };
-    const top = h(x0, y0) + (h(x0 + 1, y0) - h(x0, y0)) * sx;
-    const bottom = h(x0, y0 + 1) + (h(x0 + 1, y0 + 1) - h(x0, y0 + 1)) * sx;
-    return top + (bottom - top) * sy;
-  };
   /** The ecosystem's sweep: where a tree may grow, the budget the tier allows, and the room a forest of them needs. */
   interface NatureSweep {
     readonly key: string;
@@ -2220,13 +2208,12 @@ export function createSceneRenderer(
           const k = iy * field.side + ix;
           const ecology = Math.min(1, (field.canopy[k] ?? 0) * 0.9 + (field.trees[k] ?? 0) * 0.5 + (field.emergent[k] ?? 0) * 0.3);
           const wx = x + part.cx, wy = y + part.cy;
-          const patch = natureNoise(wx, wy, m(170), 7) * 0.6 + natureNoise(wx, wy, m(55), 9) * 0.3 + natureNoise(wx, wy, m(18), 11) * 0.1;
+
           const slope = Math.hypot(natural(x + d, y) - natural(x - d, y), natural(x, y + d) - natural(x, y - d)) / (2 * d);
           const hillside = Math.min(1, Math.max(0, (slope - 0.06) / 0.35));
           // The patches drawn out to clear masses: woods on the plains too, as
           // capões, and clean meadows between them.
-          const masses = Math.min(1, Math.max(0, (patch - 0.47) / 0.3));
-          const density = masses * 0.72 + hillside * 0.3 + ecology * 0.3 - 0.06;
+          const density = natureDensity(wx, wy, m(1), hillside, ecology);
           const o = j * cells + i;
           // The bands: inner forest, its edge, scattered trees, a rare lone one.
           if (density > 0.62) { odds[o] = 0.92; band[o] = 3; }

@@ -42,6 +42,12 @@ export interface GlobeGround {
   /** The lowest and highest ground of each piece's patch (its skirt left out). */
   readonly low: Float32Array;
   readonly high: Float32Array;
+  /**
+   * The ground as drawn at a point of a piece's square of its face (`a`, `b`
+   * from 0 to `PATCH` across it, the face's equiangular cells): the patch's
+   * own triangles, so what stands on it stands on what is drawn.
+   */
+  heightAt(tile: number, a: number, b: number): number;
 }
 
 /**
@@ -57,6 +63,7 @@ export function buildGlobeGround(relief: ReliefVersion, base: number): GlobeGrou
   const quads = PATCH * PATCH + 4 * PATCH * 2;
   const indices = new Uint32Array(TILE_COUNT * quads * 6);
   const low = new Float32Array(TILE_COUNT);
+  const corners = new Float32Array(TILE_COUNT * SIDE * SIDE);
   const high = new Float32Array(TILE_COUNT);
   const heights = new Float64Array(RING * RING);
   const ax = new Float64Array(RING * RING), ay = new Float64Array(RING * RING);
@@ -88,6 +95,7 @@ export function buildGlobeGround(relief: ReliefVersion, base: number): GlobeGrou
       for (let a = 1; a <= SIDE; a++) {
         const n = b * RING + a;
         const h = heights[n]!;
+        corners[tile * SIDE * SIDE + (b - 1) * SIDE + (a - 1)] = h;
         if (h < lo) lo = h;
         if (h > hi) hi = h;
         // The normal from the neighbours (east-west and north-south), in the
@@ -158,5 +166,13 @@ export function buildGlobeGround(relief: ReliefVersion, base: number): GlobeGrou
   geometry.setAttribute('normal', new Float32BufferAttribute(normals, 3));
   geometry.setAttribute('aSteep', new Float32BufferAttribute(steep, 1));
   geometry.setIndex(new Uint32BufferAttribute(indices, 1));
-  return { geometry, low, high };
+  const heightAt = (tile: number, a: number, b: number): number => {
+    const ia = Math.min(PATCH - 1, Math.max(0, Math.floor(a))), ib = Math.min(PATCH - 1, Math.max(0, Math.floor(b)));
+    const u = a - ia, v = b - ib, o = tile * SIDE * SIDE;
+    const h00 = corners[o + ib * SIDE + ia]!, h10 = corners[o + ib * SIDE + ia + 1]!;
+    const h01 = corners[o + (ib + 1) * SIDE + ia]!, h11 = corners[o + (ib + 1) * SIDE + ia + 1]!;
+    // The two triangles of the cell as indexed above (p00 p10 p01, p10 p11 p01).
+    return u + v <= 1 ? h00 + u * (h10 - h00) + v * (h01 - h00) : h11 + (1 - u) * (h01 - h11) + (1 - v) * (h10 - h11);
+  };
+  return { geometry, low, high, heightAt };
 }
