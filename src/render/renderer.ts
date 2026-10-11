@@ -1,5 +1,4 @@
 import { GRID_CELL } from '@world/grid';
-import { TILE_COUNT as PLANET_TILE_COUNT } from '@core/planetTiles';
 import { MAP_HALF } from '@world/bounds';
 import type { BodyPart, Severable } from '@sim/people/view';
 import type { Archetype } from '@sim/vehicles/archetypes';
@@ -2242,13 +2241,17 @@ export function createSceneRenderer(
       plates.push(plate);
       treeSum += plateSum;
     }
-    const budget = NATURE_TREES * Math.min(1, quality.vegetation / 2_600);
-    // On the planet only the pieces kept in full are swept (`planet/terrainAtlas.ts`):
-    // the budget is shared as if every piece were, so the woods are as thick
-    // whichever and however many are in full (a sum over the few made them
-    // denser the closer the view, trees popping in and out with the zoom).
-    const plannedSum = __PLANET__ ? (treeSum / Math.max(1, plates.length)) * PLANET_TILE_COUNT : treeSum;
-    const treeScale = Math.min(1, budget / Math.max(1, plannedSum));
+    // The flat map's budget; on the planet as many flat maps' as the pieces in full cover.
+    const plateArea = (2 * TERRAIN_HALF) ** 2;
+    const base = NATURE_TREES * Math.min(1, quality.vegetation / 2_600);
+    const budget = base * (__PLANET__ ? Math.max(1, (plates.length * plateArea) / m(1_920) ** 2) : 1);
+    // On the planet only the pieces kept in full are swept (`planet/terrainAtlas.ts`),
+    // and the woods stand as thick as the flat map's: the budget is the flat
+    // map's (`m(1 920)` square), shared by area - a sum over the few pieces made
+    // them denser the closer the view, and over all 864, 6.25 times thinner
+    // once the planet grew to faces of 6 km (2026-10-10).
+    const plannedSum = __PLANET__ ? (treeSum / Math.max(1, plates.length)) * (m(1_920) ** 2 / plateArea) : treeSum;
+    const treeScale = Math.min(1, base / Math.max(1, plannedSum));
     for (const { part, odds, band, di, dj } of plates) {
       for (let j = 0; j < cells; j++) {
         for (let i = 0; i < cells; i++) {

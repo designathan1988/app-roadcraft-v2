@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { acrossBorders } from './_border';
 import { RoadDoc } from '@world/doc';
 import { Network } from '@world/network';
 import { TILES_PER_SIDE } from '@core/planetTiles';
@@ -24,7 +25,9 @@ for (const [where, chart, dir] of [
   ['over an edge of the cube', 3 * TILES_PER_SIDE * TILES_PER_SIDE + 1 * TILES_PER_SIDE + 1, -1],
 ] as const) {
   const c = tileCentre(chart);
-  const at = (x: number, y: number) => toOwner(chart, { x: c.x + dir * x, y: c.y + y });
+  // Moved out as the border moved (`_border.ts`).
+  const along = acrossBorders(chart, dir, 0);
+  const at = (x: number, y: number) => toOwner(chart, { x: c.x + dir * along(x), y: c.y + y });
 
   describe(`benches along a road across the borders, ${where}`, () => {
     it('are put on its footway on every piece, stand along it, and are found again', () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { acrossBorders } from './_border';
 import { RoadDoc } from '@world/doc';
 import { Network } from '@world/network';
 import { TILES_PER_SIDE } from '@core/planetTiles';
@@ -30,7 +31,9 @@ for (const [where, chart, dir] of [
 ] as const) {
   const c = tileCentre(chart);
   /** A point `x` along the line from `chart`'s piece (east, or west), kept on the chart of the piece it lies on. */
-  const at = (x: number, y: number) => toOwner(chart, { x: c.x + dir * x, y: c.y + y });
+  // Moved out as the border moved (`_border.ts`).
+  const along = acrossBorders(chart, dir, 0);
+  const at = (x: number, y: number) => toOwner(chart, { x: c.x + dir * along(x), y: c.y + y });
 
   describe(`a railway across the borders between pieces, ${where}`, () => {
     const run = layTrack([-100, 500, 1400].map((x) => at(x, 30)));
@@ -40,10 +43,11 @@ for (const [where, chart, dir] of [
       expect(new Set(run.map((p) => chartAt(p.x, p.y))).size).toBeGreaterThan(2);
       const g = railGraph(data, 'train');
       for (const e of g.edges) expect(e.length).toBeLessThanOrEqual(PLANET_MAX_PIECE + 1);
-      // 1500 units drawn, give or take the charts' scale.
+      // As long as it was drawn, give or take the charts' scale.
+      const drawn = along(1400) - along(-100);
       const total = g.edges.reduce((sum, e) => sum + e.length, 0);
-      expect(total).toBeGreaterThan(1490);
-      expect(total).toBeLessThan(1510);
+      expect(total).toBeGreaterThan(drawn - 10);
+      expect(total).toBeLessThan(drawn + 10);
     });
 
     it('is found where it is, in the middle of every stretch across a border', () => {
@@ -70,8 +74,9 @@ for (const [where, chart, dir] of [
         const b = onChartOf(path[i]!, path[i - 1]!);
         length += Math.hypot(b.x - path[i - 1]!.x, b.y - path[i - 1]!.y);
       }
-      expect(length).toBeGreaterThan(1490);
-      expect(length).toBeLessThan(1510);
+      const drawn = along(1400) - along(-100);
+      expect(length).toBeGreaterThan(drawn - 10);
+      expect(length).toBeLessThan(drawn + 10);
     });
 
     it('crosses a road beyond a border as a level crossing, not down it', () => {

@@ -1,3 +1,4 @@
+import { m } from './units';
 /**
  * THE PLANET'S GEOMETRY: six flat square maps on a cube, drawn as a sphere.
  *
@@ -27,8 +28,13 @@
  * frame. Pure: no three, no randomness, no allocation in the `*Into` calls.
  */
 
-/** Half a face's side, metres: the faces are 6 km square (the player, 2026-10-10). */
-export const FACE_HALF = 3000;
+/**
+ * Half a face's side: 3 km, so the faces are 6 km square (the player,
+ * 2026-10-10). Written in metres (`m`): it was 3 000 world units, 1.2 km at
+ * 0.4 m a unit, and the planet was 2.5 times too small for its towns - the
+ * horizon and the air pressed close round them (docs/ESCALA.md).
+ */
+export const FACE_HALF = m(3000);
 
 /** The sphere's radius: a face's axes keep their length on it (`4 FACE_HALF / pi`). */
 export const PLANET_RADIUS = (4 * FACE_HALF) / Math.PI;

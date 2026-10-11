@@ -65,7 +65,8 @@ const CACHE = 8;
  * view's middle altitude brought a hundred pieces in and out at every turn.
  */
 const NEAR_MOST = 24;
-const NEAR_RADIUS = 1100;
+/** About two pieces round the one looked at. */
+const NEAR_RADIUS = TILE_HALF * 4.5;
 /** Milliseconds a frame for bringing near pieces in full (the ones with something on them come at once). */
 const NEAR_BUDGET_MS = 8;
 /**

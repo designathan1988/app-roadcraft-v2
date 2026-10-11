@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { borderShift } from './_border';
 import type { Vec2 } from '@core/vec2';
 import { RoadDoc } from '@world/doc';
 import { Network } from '@world/network';
@@ -25,7 +26,9 @@ import { PLANET_MAX_PIECE } from '@editor/planetFrame';
 // Over an edge of the cube: west of the second piece of face 3.
 const chart = 3 * TILES_PER_SIDE * TILES_PER_SIDE + 1 * TILES_PER_SIDE + 1;
 const c = tileCentre(chart);
-const at = (x: number, y: number): Vec2 => toOwner(chart, { x: c.x - x, y: c.y + y });
+// Moved out as the border moved (`_border.ts`).
+const shift = borderShift(chart, -1, 0);
+const at = (x: number, y: number): Vec2 => toOwner(chart, { x: c.x - (x + shift), y: c.y + y });
 
 function world() {
   const doc = new RoadDoc();

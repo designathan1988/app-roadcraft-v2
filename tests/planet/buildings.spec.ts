@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { borderShift } from './_border';
 import type { Vec2 } from '@core/vec2';
 import { RoadDoc } from '@world/doc';
 import { Network } from '@world/network';
@@ -27,7 +28,9 @@ import { commitRoadPath } from '@editor/commit';
 // Over an edge of the cube: west of the second piece of face 3.
 const chart = 3 * TILES_PER_SIDE * TILES_PER_SIDE + 1 * TILES_PER_SIDE + 1;
 const c = tileCentre(chart);
-const at = (x: number, y: number): Vec2 => toOwner(chart, { x: c.x - x, y: c.y + y });
+// Moved out as the border moved (`_border.ts`).
+const shift = borderShift(chart, -1, 0);
+const at = (x: number, y: number): Vec2 => toOwner(chart, { x: c.x - (x + shift), y: c.y + y });
 
 describe('buildings by a road across the borders', () => {
   it('face the road from the part of it over the next piece, flush with its footway', () => {
@@ -71,7 +74,7 @@ describe('buildings by a road across the borders', () => {
     // A house kept on its chart, standing over the border into the next piece.
     // The border west of the piece's centre, and the house's anchor just east of it.
     let border = 0;
-    for (let x = 150; x < 300; x += 0.5) {
+    for (let x = 150 + shift; x < 300 + shift; x += 0.5) {
       const p = toOwner(chart, { x: c.x - x, y: c.y });
       if (chartAt(p.x, p.y) !== chart) { border = x; break; }
     }

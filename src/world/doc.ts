@@ -43,6 +43,7 @@ import { isZoneDensity, isZoneMark, isZoneUse, type Zone, type ZoneMark } from '
 import { normalizePerson, type PersonSpec } from '@people/spec';
 import { ChangeJournal, rectAround, type ChangeRect, type DocChangeKind } from './changes';
 import { rescaleSerializedDoc } from './rescale';
+import { FACE_HALF } from '@core/cubeSphere';
 import { METERS_PER_UNIT } from './units';
 
 /** `shape` flattened until no band of a road of this profile folds over (see `RoadDoc.fitCurve`). */
@@ -1477,6 +1478,8 @@ export class RoadDoc {
     return {
       version: 1,
       unit: METERS_PER_UNIT,
+      // The planet's size it is made on (`rescale.ts`): a map from a planet of another size is moved onto this one.
+      ...(__PLANET__ ? { planetHalf: FACE_HALF } : {}),
       nodes: [...this.nodes.values()].map((n) => ({
         // Copied, never aliased. `setMovementBlocked` mutates this array in
         // place (`push`/`splice`), so handing out the live reference made every
@@ -1803,6 +1806,8 @@ export interface SerializedDoc {
   readonly version: 1;
   /** Metres per world unit the map was saved in (`world/units.ts`); absent: 0.4, every map before 2026-10-10 (`rescale.ts`). */
   readonly unit?: number;
+  /** On the planet: the FACE_HALF of the planet it was made on (absent: 3 000, `rescale.ts`). */
+  readonly planetHalf?: number;
   readonly nodes: readonly {
     id: number; x: number; y: number; heightOffset?: number; smooth?: boolean;
     control?: JunctionControl; blockedMovements?: readonly string[];

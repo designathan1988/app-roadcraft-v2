@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { borderShift } from './_border';
 import { Frustum, Matrix4, PerspectiveCamera, Sphere, Vector3 } from 'three';
 import { TILES_PER_SIDE } from '@core/planetTiles';
 import { tileCentre } from '@world/planet/atlas';
@@ -22,8 +23,9 @@ describe('culling where the planet draws a thing', () => {
     // Over an edge of the cube: west of the second piece of face 3.
     const chart = 3 * TILES_PER_SIDE * TILES_PER_SIDE + 1 * TILES_PER_SIDE + 1;
     const c = tileCentre(chart);
-    const look = toOwner(chart, { x: c.x - 200, y: c.y });
-    const across = toOwner(chart, { x: c.x - 290, y: c.y + 5 });
+    const shift = borderShift(chart, -1, 0);
+    const look = toOwner(chart, { x: c.x - 200 - shift, y: c.y });
+    const across = toOwner(chart, { x: c.x - 290 - shift, y: c.y + 5 });
     expect(chartAt(across.x, across.y)).not.toBe(chartAt(look.x, look.y));
     anchorPlanet(look.x, -look.y);
     const camera = new PerspectiveCamera(50, 16 / 9, 0.5, 20000);

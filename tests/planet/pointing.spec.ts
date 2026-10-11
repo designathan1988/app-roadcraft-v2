@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { borderShift } from './_border';
 import type { Vec2 } from '@core/vec2';
 import { TILES_PER_SIDE } from '@core/planetTiles';
 import { tileCentre } from '@world/planet/atlas';
@@ -17,7 +18,9 @@ import { insideLot } from '@world/lots';
 
 const chart = 2 * TILES_PER_SIDE * TILES_PER_SIDE + 5 * TILES_PER_SIDE + 5;
 const c = tileCentre(chart);
-const at = (x: number, y: number): Vec2 => ({ x: c.x + x, y: c.y + y });
+// Moved out as the border moved (`_border.ts`).
+const shift = borderShift(chart, 1, 0);
+const at = (x: number, y: number): Vec2 => ({ x: c.x + x + shift, y: c.y + y });
 
 describe('pointing across the pieces of the planet', () => {
   it('finds a lot kept on one chart from a point written on the next', () => {
@@ -33,7 +36,7 @@ describe('pointing across the pieces of the planet', () => {
   it('carries a point onto the chart of a stored one, and leaves it when they share one', () => {
     const p = toOwner(chart, at(300, 40));
     const q = onChartOf(p, at(0, 0));
-    expect(Math.hypot(q.x - (c.x + 300), q.y - (c.y + 40))).toBeLessThan(1e-6);
+    expect(Math.hypot(q.x - (c.x + 300 + shift), q.y - (c.y + 40))).toBeLessThan(1e-6);
     const same = at(10, 10);
     expect(onChartOf(same, at(0, 0))).toBe(same);
   });

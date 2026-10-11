@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { borderShift } from './_border';
 import type { Vec2 } from '@core/vec2';
 import { TILES_PER_SIDE } from '@core/planetTiles';
 import { RoadDoc } from '@world/doc';
@@ -31,7 +32,8 @@ describe('the lots\' cars on the planet', () => {
     doc.setBalance(1e9);
     const net = new Network(doc);
     net.rebuild();
-    const a = at(-420, 0), b = onChartOf(at(420, 0), a);
+    // Across both borders, as the borders moved (`_border.ts`).
+    const a = at(-420 - borderShift(chart, -1, 0), 0), b = onChartOf(at(420 + borderShift(chart, 1, 0), 0), a);
     expect(commitRoadPath(doc, net, { kind: 'free', at: a }, { kind: 'free', at: b }, 1,
       [{ start: { at: a, heightOffset: 0 }, end: { at: b, heightOffset: 0 }, curve: null }]).committed).toBe(true);
     if (net.revision !== doc.revision) net.rebuild();
