@@ -650,9 +650,11 @@ sim.conflicts.seed(await keptZones);
 const scene: SceneHandle = createSceneRenderer(canvas3d, { x: camera.x, y: camera.y }, camera.zoom, savedQualityLevel(), requestDraw);
 
 // ------------------------------------------------------------- free flight
-// The free camera (`render/planet/flight.ts`): V takes off from where the view
-// is and lands back over the ground ahead. The mouse steers - locked to the
-// canvas once clicked, as flight games have it - and the keys fly.
+// The free camera (`render/planet/flight.ts`), as the player set it out
+// (2026-10-10): the cursor hidden and the mouse captured (Pointer Lock API,
+// MDN) the moment it takes off; the mouse turns the view; Esc frees the
+// mouse for the panels and a click on the scene takes it again; V or the
+// bar's Fly button lands. A small sight marks the middle of the view.
 const flight = scene.flight;
 const flightHud = document.createElement('div');
 flightHud.className = 'flight-hud';
@@ -661,10 +663,24 @@ flightHud.hidden = true;
 // in the corner, the keys' hint only for the first seconds of a flight.
 flightHud.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:30;pointer-events:none;color:rgba(232,244,255,.85);font:500 12px/1.4 system-ui,sans-serif;'
   + 'max-width:min(520px,calc(100vw - 24px));text-shadow:0 1px 2px #000,0 0 6px rgba(0,0,0,.6)';
-const FLIGHT_HINT_MS = 5000;
+const flightSight = document.createElement('div');
+flightSight.id = 'flightSight';
+flightHud.id = 'flightHud';
+flightSight.hidden = true;
+flightSight.style.cssText = 'position:fixed;left:50%;top:50%;width:14px;height:14px;margin:-7px 0 0 -7px;z-index:30;pointer-events:none;'
+  + 'border:1.5px solid rgba(255,255,255,.75);border-radius:50%;box-shadow:0 0 3px rgba(0,0,0,.7)';
+const FLIGHT_HINT_MS = 6000;
 let flightStartedAt = 0;
-document.body.append(flightHud);
+document.body.append(flightHud, flightSight);
+// U hides the whole interface while flying - the view alone, to look at and to
+// photograph - and shows it again; landing shows it.
+const cleanStyle = document.createElement('style');
+cleanStyle.textContent = 'body.flight-clean #app > :not(#game):not(#game-scene), body.flight-clean > :not(#app):not(#flightHud):not(#flightSight):not(script):not(style) { visibility: hidden !important; }'
+  + ' body.flight-clean #flightHud { visibility: hidden !important; }';
+document.head.append(cleanStyle);
+const setClean = (on: boolean): void => { document.body.classList.toggle('flight-clean', on); };
 let flightShownAt = 0;
+const flightLocked = (): boolean => document.pointerLockElement === canvas;
 const metresText = (units: number): string => {
   const metres = units / UNITS_PER_METER;
   return metres >= 10_000 ? `${formatDecimal(metres / 1000, 0)} km` : metres >= 1000 ? `${formatDecimal(metres / 1000, 1)} km` : `${formatDecimal(metres, 0)} m`;
@@ -675,43 +691,73 @@ function updateFlightHud(now: number): void {
   flightShownAt = now;
   const st = flight.state;
   const speed = metresText(st.speed);
-  const hint = now - flightStartedAt < FLIGHT_HINT_MS
-    ? `<div style="opacity:.75">${document.pointerLockElement === canvas ? t('flight.hint') : t('flight.clickToSteer') + ' · ' + t('flight.hint')}</div>`
-    : '';
+  // Freed with Esc: how to take the mouse again, for as long as it is free.
+  const hint = !flightLocked()
+    ? `<div style="opacity:.85">${t('flight.clickToSteer')}</div>`
+    : now - flightStartedAt < FLIGHT_HINT_MS ? `<div style="opacity:.75">${t('flight.hint')}</div>` : '';
   flightHud.innerHTML = hint + `<div>${speed}/s${st.boost ? ' ⚡' : ''} · ${t('flight.height', { body: t(`flight.body.${st.near}`) })}: ${metresText(st.height)}`
     + `${st.throttle !== 1 ? ` · ${t('flight.throttle')} ${formatDecimal(st.throttle, st.throttle < 1 ? 2 : 1)}×` : ''}</div>`;
 }
+/** Captures the mouse for the flight (a user gesture must have started it: the key or the button). */
+function captureFlightMouse(): void {
+  if (flightLocked()) return;
+  try {
+    const asked = canvas.requestPointerLock?.() as Promise<void> | undefined;
+    asked?.catch?.(() => {});
+  } catch { /* the page must be clicked first: the hint says so */ }
+}
+// A tab closed by mistake mid-flight (Ctrl to go down, W ahead: Chrome's Ctrl+W
+// cannot be taken by the page) asks first (`beforeunload`).
+const holdTab = (e: BeforeUnloadEvent): void => { e.preventDefault(); };
 function takeOff(): void {
   if (!flight || flight.active) return;
   cameraMotion.stop();
   flight.enter();
   flightHud.hidden = false;
+  flightSight.hidden = false;
   flightShownAt = 0;
   flightStartedAt = performance.now();
+  window.addEventListener('beforeunload', holdTab);
+  captureFlightMouse();
   requestDraw();
 }
 function land(): void {
   if (!flight?.active) return;
   const { landing, height } = flight.exit();
-  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  if (flightLocked()) document.exitPointerLock();
   flightHud.hidden = true;
+  flightSight.hidden = true;
+  setClean(false);
+  window.removeEventListener('beforeunload', holdTab);
   if (landing) { camera.x = landing.x; camera.y = landing.y; }
   // As much ground in view as the height the flight left at.
   camera.zoom = Math.max(view.zoomBounds.min, surface.cssH / (2 * Math.max(m(8), height * 0.55)));
   syncViewFromFlatCamera();
   requestDraw();
 }
+// The mouse freed (Esc, or the browser took it back): the keys let go, the sight hidden.
+document.addEventListener('pointerlockchange', () => {
+  if (!flight?.active) return;
+  flightSight.hidden = !flightLocked();
+  if (!flightLocked()) flight.releaseAll();
+  flightShownAt = 0;
+  requestDraw();
+});
 window.addEventListener('keydown', (e) => {
   if (!flight) return;
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
-  if (e.ctrlKey || e.metaKey || e.altKey) return;
-  if (e.code === 'KeyV' && !e.repeat) {
+  // Ctrl is the way down while flying; other shortcuts with it stay the page's.
+  const ctrl = e.code === 'ControlLeft' || e.code === 'ControlRight';
+  if ((e.ctrlKey && !ctrl && !flight.active) || e.metaKey || e.altKey) return;
+  if (e.code === 'KeyV' && !e.repeat && !e.ctrlKey) {
     e.preventDefault(); e.stopImmediatePropagation();
     if (flight.active) land(); else takeOff();
     return;
   }
   if (!flight.active) return;
-  if (e.code === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); land(); return; }
+  // Esc frees the mouse (the browser does it when locked); the flight goes on.
+  if (e.code === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); if (flightLocked()) document.exitPointerLock(); return; }
+  if (e.code === 'KeyU' && !e.repeat) { e.preventDefault(); e.stopImmediatePropagation(); setClean(!document.body.classList.contains('flight-clean')); return; }
   if (flight.press(e.code, e.shiftKey)) { e.preventDefault(); e.stopImmediatePropagation(); requestDraw(); }
 }, { capture: true });
 window.addEventListener('keyup', (e) => { if (flight?.active) flight.release(e.code, e.shiftKey); }, { capture: true });
@@ -722,13 +768,14 @@ canvas.addEventListener('pointerdown', (e) => {
   if (!flight?.active) return;
   e.stopImmediatePropagation();
   e.preventDefault();
-  if (document.pointerLockElement !== canvas) void canvas.requestPointerLock?.();
+  // A click on the scene takes the mouse again.
+  captureFlightMouse();
 }, { capture: true });
 canvas.addEventListener('pointermove', (e) => {
   if (!flight?.active) return;
   e.stopImmediatePropagation();
-  // Locked: every move steers; otherwise a drag does.
-  if (document.pointerLockElement === canvas || e.buttons !== 0) { flight.look(e.movementX, e.movementY); requestDraw(); }
+  // Only the captured mouse steers: freed, it is the panels'.
+  if (flightLocked()) { flight.look(e.movementX, e.movementY); requestDraw(); }
 }, { capture: true });
 for (const type of ['pointerup', 'pointercancel', 'contextmenu'] as const) {
   canvas.addEventListener(type, (e) => { if (flight?.active) { e.stopImmediatePropagation(); e.preventDefault(); } }, { capture: true });

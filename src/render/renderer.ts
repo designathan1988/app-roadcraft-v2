@@ -566,11 +566,14 @@ export function createSceneRenderer(
   });
   // On the planet: the stars, the sun, the moon and the air round it (`planet/space.ts`).
   const space = __PLANET__ ? createSpace(scene, renderer) : null;
+  /** The lowest the eye may stand over the buildings (the rig's solids), for the flight. */
+  let solidsFloorAt: ((x: number, y: number) => number) | null = null;
   // The free camera, flying over and away from the planet.
   const flight = __PLANET__ && space ? new Flight({
     get camera() { return rig.camera as PerspectiveCamera; },
     bodies: () => space.bodies(),
-    groundAt: (x, y) => terrain.renderedHeightAt(x, y),
+    // The ground, or a building's roof over it (the camera's own solids, `setSolids`).
+    groundAt: (x, y) => Math.max(terrain.renderedHeightAt(x, y), solidsFloorAt ? solidsFloorAt(x, y) : -Infinity),
     setPose: (pose) => rig.setFlight(pose),
   }) : null;
   if (import.meta.env.DEV && space) Object.assign(window, { __space: space, __spaceCamera: () => rig.camera });
@@ -3068,7 +3071,7 @@ export function createSceneRenderer(
           return floor;
         };
         let solids: CameraSolids | null = null;
-        rig.setSolids((x, y) => {
+        rig.setSolids(solidsFloorAt = (x, y) => {
           if (!solids) {
             const t0 = performance.now();
             solids = cameraSolids(net.doc.buildings.all(), floorOf);
