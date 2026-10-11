@@ -707,7 +707,7 @@ const flightLocked = (): boolean => document.pointerLockElement === canvas;
  * the course. The mouse freed with Esc to use the panels does not steer.
  */
 const flightAim = { x: 0, y: 0, on: false, freed: false };
-const AIM_DEAD = 0.08;
+const AIM_DEAD = 0.12;
 /** Turn at the edge of the screen, CSS px of mouse motion a second (`Flight.look`). */
 const AIM_RATE = 1100;
 function steerByPointer(seconds: number): void {
@@ -756,6 +756,8 @@ function takeOff(): void {
   flightShownAt = 0;
   flightStartedAt = performance.now();
   flightAim.freed = false;
+  // The aim from the pointer's next move: where it rested at take-off it would turn the view at once.
+  flightAim.on = false;
   window.addEventListener('beforeunload', holdTab);
   captureFlightMouse();
   requestDraw();
