@@ -4,6 +4,11 @@ Pedido: selecionar vários elementos (caixa, Shift, Ctrl), ver os elementos do
 edifício agrupados (janelas, portas…) com parâmetros, e deixar alguns fora da
 regra dos demais (estilo, tamanho ou posição próprios).
 
+Estado (2026-10-10): tudo abaixo está feito e foi usado no editor (5792):
+caixa em janela e cruzada, modificadores, grupo que move/copia/gira/apaga
+junto, grupos automáticos com pré-destaque, variação "só os selecionados",
+soltar da regra (sem refluir a regra) e voltar à regra (com a variação).
+
 ## Referências lidas
 
 - SketchUp, *Selecting geometry* (help.sketchup.com/en/sketchup/selecting-geometry):

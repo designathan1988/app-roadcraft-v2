@@ -92,9 +92,10 @@ mudança. Nada vira malha solta.
 
 ## Fila de pedidos (2026-10-10, nesta ordem)
 
-1. Texturas reais (PBR) e vidro/portas de qualidade sem perder desempenho. (em andamento)
-2. Painel de Materiais: cores e texturas com miniaturas, busca e cor livre; aplicar com o balde em face, área, volume ou peça; pintar sobre os prédios e aplicar imagens (decalques); piso próprio para terraços.
-3. Noite: modo noturno, janelas acesas (por pavimento, aleatórias ou escolhidas), luzes de fachada e postes.
+1. Texturas reais (PBR) e vidro/portas de qualidade sem perder desempenho. (feito: procedurais na GPU + fotografadas)
+2. Painel de Materiais: cores e texturas com miniaturas, busca e cor livre; aplicar com o balde em face, área, volume ou peça; pintar sobre os prédios e aplicar imagens (decalques); piso próprio para terraços. (feito)
+3. Noite: modo noturno, janelas acesas (por pavimento, aleatórias ou escolhidas), luzes de fachada e postes. (feito: hora do dia, cômodos pela fração acordada, arandelas e postes; peças em face com referencial destro)
+3b. Manipulação e seleção (urgente, 2026-10-10): alças de tamanho, pré-seleção, itens de telhado no telhado, seleção múltipla (caixa, Ctrl/Shift), grupos automáticos de elementos, soltar/voltar à regra. (feito: docs/SELECAO.md)
 4. Interiores fáceis: corte de vista por pavimento, paredes internas, portas e janelas internas, lajes, escadas; replicar pavimentos. Modo caminhar dentro (primeira pessoa, abrir portas e janelas, subir escadas).
 5. Objetos de dentro e de fora (móveis, árvores, vegetação, mobiliário urbano) de bibliotecas prontas.
 6. Validações 2 a 5 (prédio com varandas, indústria, curva, irregular com pátio), salvar/abrir/exportar.
