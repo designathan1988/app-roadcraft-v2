@@ -110,7 +110,9 @@ import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } fro
 import { GroundDependant, type GroundRecord, type Rect, rectAround, unionRect } from './groundChanges';
 import { FOREST_SPECIES, buildGroundCover, createGroundCoverKit, type CoverPlacement, type ForestSpecies, type GroundCover, type TreePlacement } from './groundCover';
 import { clearingIndex } from '@world/trees';
-import { natureDensity } from './natureNoise';
+import { natureDensity, natureDensity3 } from './natureNoise';
+import { atlasToSphereInto as woodsAtlasToSphere } from '@world/planet/charts';
+import { PLANET_RADIUS as PLANET_R } from '@core/cubeSphere';
 import { buildNatureForest, forestRoom, loadNatureTrees, seedOfKind, type NatureForest, type NatureTreeKit } from './natureTrees';
 import { createFogTexture, rasterFog, type FogLayer } from './fogLayer';
 import { buildElementLayer, loadElementKit, type ElementKit, type ElementLayer } from './elements';
@@ -410,7 +412,7 @@ function gardenPlants(all: Iterable<Building>, groundAt: (x: number, y: number) 
  * units) with the trees still drawn: past it a tree is under a pixel or two
  * (at 1 000 they went from a few hundred metres up, the player 2026-10-10).
  */
-const TREE_VIEW = 14_000;
+const TREE_VIEW = 30_000;
 
 export function createSceneRenderer(
   canvas: HTMLCanvasElement,
@@ -2157,6 +2159,7 @@ export function createSceneRenderer(
   /** One plate's tree density as last swept, and what it was swept for (`natureSweep`), by surface. */
   interface NaturePlate { readonly key: string; readonly part: TerrainPart; readonly odds: Float32Array; readonly band: Uint8Array; readonly di: number; readonly dj: number; readonly sum: number }
   const naturePlates = new WeakMap<object, NaturePlate>();
+  const woodsSphere = { x: 0, y: 0, z: 0 };
   const natureSweep = (key: string): NatureSweep => {
     const trees: Candidate[] = [];
     if (quality.vegetation <= 0 || !terrain.parts.some((p) => p.surface.ecology())) return { key, trees, budget: 0, room: null };
@@ -2213,7 +2216,12 @@ export function createSceneRenderer(
           const hillside = Math.min(1, Math.max(0, (slope - 0.06) / 0.35));
           // The patches drawn out to clear masses: woods on the plains too, as
           // capões, and clean meadows between them.
-          const density = natureDensity(wx, wy, m(1), hillside, ecology);
+          // On the planet at its point of the sphere: one pattern over every piece (`natureNoise.ts`).
+          let density: number;
+          if (__PLANET__) {
+            woodsAtlasToSphere(wx, wy, woodsSphere);
+            density = natureDensity3(woodsSphere.x * PLANET_R, woodsSphere.y * PLANET_R, woodsSphere.z * PLANET_R, m(1), hillside, ecology);
+          } else density = natureDensity(wx, wy, m(1), hillside, ecology);
           const o = j * cells + i;
           // The bands: inner forest, its edge, scattered trees, a rare lone one.
           if (density > 0.62) { odds[o] = 0.92; band[o] = 3; }

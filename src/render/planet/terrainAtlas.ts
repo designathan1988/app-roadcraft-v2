@@ -81,7 +81,7 @@ const NEAR_VIEW = 2400;
  * in (the screen's half height) is under this: past it a tree is under a
  * pixel or two across.
  */
-const FOREST_VIEW = 14_000;
+const FOREST_VIEW = 60_000;
 /** Milliseconds a frame for growing the far woods, piece by piece. */
 const FOREST_BUDGET_MS = 3;
 

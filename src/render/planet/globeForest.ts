@@ -2,11 +2,11 @@ import {
   BufferGeometry, Color, CylinderGeometry, IcosahedronGeometry, InstancedBufferAttribute, InstancedMesh, MeshStandardMaterial,
 } from 'three';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { FACE_HALF, faceToSphereInto, type Vec3 } from '@core/cubeSphere';
+import { FACE_HALF, PLANET_RADIUS, faceToSphereInto, type Vec3 } from '@core/cubeSphere';
 import { TILE_COUNT, TILES_PER_SIDE } from '@core/planetTiles';
 import { sphereToChartInto } from '@world/planet/charts';
 import { m } from '@world/units';
-import { natureDensity } from '../natureNoise';
+import { natureDensity3 } from '../natureNoise';
 import { PATCH } from './globeGround';
 
 /**
@@ -36,6 +36,9 @@ const FAR_ECOLOGY = 0.35;
 /** Trees a flat map (`m(1 920)` square) grows at full vegetation (`renderer.ts` NATURE_TREES). */
 const FLAT_TREES = 2_500;
 const STEP = (2 * FACE_HALF) / TILES_PER_SIDE;
+/** Distances (world units) over which a far tree shrinks to nothing: from some 8 px tall to under one. */
+const SHRINK_FROM = 9_000;
+const SHRINK_TO = 30_000;
 
 export interface GlobeForest {
   readonly mesh: InstancedMesh;
@@ -103,7 +106,7 @@ export function createGlobeForest(heightAt: (tile: number, a: number, b: number)
     const d = 0.5;
     const slope = Math.hypot(heightAt(tile, a + d, b) - heightAt(tile, a - d, b), heightAt(tile, a, b + d) - heightAt(tile, a, b - d)) / (2 * d * (STEP / PATCH));
     const hillside = Math.min(1, Math.max(0, (slope - 0.06) / 0.35));
-    return { x: at.x, y: at.y, h, density: natureDensity(at.x, at.y, m(1), hillside, FAR_ECOLOGY) };
+    return { x: at.x, y: at.y, h, density: natureDensity3(s.x * PLANET_RADIUS, s.y * PLANET_RADIUS, s.z * PLANET_RADIUS, m(1), hillside, FAR_ECOLOGY) };
   };
   // The density per area the near woods reach, estimated from a sample of
   // cells (every piece, a few each): the near sweep scales its odds so a
@@ -124,6 +127,18 @@ export function createGlobeForest(heightAt: (tile: number, a: number, b: number)
 
   const geometry = treeGeometry();
   const material = new MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
+  // Each tree shrinks away with its distance to the eye (its foot where the
+  // planet draws it), between `SHRINK_FROM` and `SHRINK_TO`: past them a
+  // tree is a pixel across, and the ground's own woods tone stands in
+  // (\`terrain.ts\` vTerrainForest) - a level of detail with no pop.
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+      {
+        vec3 treeFoot = planetPoint((modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz);
+        transformed *= 1.0 - smoothstep(${SHRINK_FROM.toFixed(1)}, ${SHRINK_TO.toFixed(1)}, distance(treeFoot, cameraPosition));
+      }`);
+  };
+  material.customProgramCacheKey = () => 'globe-forest-shrink';
   const mesh = new InstancedMesh(geometry, material, capacity);
   mesh.name = 'planet-far-forest';
   mesh.count = 0;

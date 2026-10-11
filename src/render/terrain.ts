@@ -28,6 +28,7 @@ import {
   type Texture,
   type WebGLRenderer,
 } from 'three';
+import { UNITS_PER_METER as UNITS_PER_METER_HERE } from '@world/units';
 import { TILE_COUNT as PLANET_TILE_COUNT, TILES as PLANET_TILES } from '@core/planetTiles';
 import { GRID_ORIGIN } from '@world/planet/charts';
 
@@ -90,6 +91,24 @@ const WATER_CELL = 4;
  * planet.
  */
 const PLANET_BIOME_NOISE = __PLANET__ ? `
+  // \`natureNoise.ts\` natureNoise, the same integer hash (uint wraps as Math.imul does).
+  float woodsHash(int a, int b, int c, uint salt) {
+    uint v = (uint(a) * 374761393u) ^ (uint(b) * 668265263u) ^ (uint(c) * 1440670441u) ^ (salt * 2246822519u);
+    v = (v ^ (v >> 13u)) * 1274126177u;
+    return float(v ^ (v >> 16u)) / 4294967296.0;
+  }
+  float woodsLayer(ivec3 c, vec2 sm, int z, uint salt) {
+    float top = mix(woodsHash(c.x, c.y, z, salt), woodsHash(c.x + 1, c.y, z, salt), sm.x);
+    float bottom = mix(woodsHash(c.x, c.y + 1, z, salt), woodsHash(c.x + 1, c.y + 1, z, salt), sm.x);
+    return mix(top, bottom, sm.y);
+  }
+  // \`natureNoise.ts\` natureNoise3 at a point of the sphere (world units).
+  float woodsNoise(vec3 p, float scale, uint salt) {
+    vec3 g = p / scale, c = floor(g), f = g - c;
+    vec3 sm = f * f * (3.0 - 2.0 * f);
+    ivec3 ci = ivec3(c);
+    return mix(woodsLayer(ci, sm.xy, ci.z, salt), woodsLayer(ci, sm.xy, ci.z + 1, salt), sm.z);
+  }
   float planetBiomeHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
   float planetBiomeNoise(vec3 x) {
     vec3 i = floor(x), f = fract(x);
@@ -1880,6 +1899,23 @@ function terrainMaterial(
            blended.rgb = mix(blended.rgb, blended.rgb * vec3(0.3, 0.36, 0.24), clamp(shoreSample.w * 1.6, 0.0, 0.9));
          }
          ${PLANET_BIOMES}
+         ${__PLANET__ ? `
+         // The woods' own tone under the trees and in their place from afar
+         // (\`globeForest.ts\` shrinks each far tree away with the distance):
+         // the masses stay, as a forest seen from orbit is a darker tone of
+         // the land - never a pop from trees to bare ground. Worked out per
+         // pixel from the same noise the trees stand by (\`natureNoise.ts\`),
+         // at the same map coordinates: one pattern on every piece.
+         {
+           vec3 woodsAt = normalize(vTerrainDir) * PLANET_R;
+           float woodsPatch = woodsNoise(woodsAt, ${(170 * UNITS_PER_METER_HERE).toFixed(4)}, 7u) * 0.6
+             + woodsNoise(woodsAt, ${(55 * UNITS_PER_METER_HERE).toFixed(4)}, 9u) * 0.3
+             + woodsNoise(woodsAt, ${(18 * UNITS_PER_METER_HERE).toFixed(4)}, 11u) * 0.1;
+           float woodsMass = clamp((woodsPatch - 0.47) / 0.3, 0.0, 1.0);
+           float woodsDensity = woodsMass * 0.72 + 0.35 * 0.3 - 0.06;
+           float woods = smoothstep(0.38, 0.7, woodsDensity);
+           blended.rgb = mix(blended.rgb, blended.rgb * vec3(0.5, 0.68, 0.45), woods * living);
+         }` : ''}
          // (No slope wear, dry tops, pale crests or dark hollows in the colours
          // any more: the player asked for the terrain's effects to go.)
          {
